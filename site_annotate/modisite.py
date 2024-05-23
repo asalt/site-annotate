@@ -75,42 +75,40 @@ def quant_isobaric_site(psms_positions):
     return fullres
 
 
-def main(psms: pd.DataFrame, seqinfo: dict, isobaric=True):
+def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
 
     sequence = seqinfo["sequence"]
     VALID_COLS = ["sty_79_9663"]
     RESULTS = dict()
 
     for col in VALID_COLS:
-        if len(psms[~psms[col].isna()]) == 0:
+        if len(df[~df[col].isna()]) == 0:
             return
 
-        res = psms[~psms[col].isna()][col].apply(extract_positions)
+        res = df[~df[col].isna()][col].apply(extract_positions)
         res_df = res.apply(position_dict_to_df)
         res_df = reset_inner_index(res_df)
 
-        psms_positions = pd.merge(
-            res_df, psms, left_on="original_index", right_index=True
-        )
-        psms_positions["position_absolut"] = (
-            psms_positions["position"] + psms_positions["protein_start"] - 1
+        df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
+        df_positions["position_absolut"] = (
+            df_positions["position"] + df_positions["protein_start"] - 1
         )
 
-        psms_positions["fifteenmer"] = psms_positions.apply(
+        df_positions["fifteenmer"] = df_positions.apply(
             lambda x: create_15mer(sequence, x["position_absolut"]), axis=1
         )
 
         if isobaric:
-            psms_positions = quant_isobaric_site(psms_positions)
+            df_positions = quant_isobaric_site(df_positions)
 
         best_probability_col = col + "_best_localization"
-        psms_positions_filtered = psms_positions[
-            (psms_positions.prob > 0.5)
-            | (psms_positions.prob == psms_positions[best_probability_col])
+        df_positions_filtered = df_positions[
+            (df_positions.prob > 0.5)
+            | (df_positions.prob == df_positions[best_probability_col])
         ]
 
         # psms_positions.groupby("15mer").apply(quant_protein)
 
-        RESULTS[col] = psms_positions_filtered
+        RESULTS[col] = df_positions_filtered
 
     return RESULTS

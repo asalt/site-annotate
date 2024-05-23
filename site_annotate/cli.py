@@ -79,7 +79,7 @@ def main(cores, psms, out, fasta, **kwargs):
     infile = pathlib.Path(psms[0])
     outfile = infile.parent / f"site_annotation_notcondensed.tsv"
 
-    fullres_df.write_csv(outfile)
+    fullres_df.to_csv(outfile)
 
     # with ProcessPoolExecutor() as executor:
     #     futures = {executor.submit(process_row, row): row for index, row in df.iterrows()}
