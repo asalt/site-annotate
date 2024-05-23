@@ -80,6 +80,7 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
     sequence = seqinfo["sequence"]
     VALID_COLS = ["sty_79_9663"]
     RESULTS = dict()
+    # breakpoint()
 
     for col in VALID_COLS:
         if len(df[~df[col].isna()]) == 0:

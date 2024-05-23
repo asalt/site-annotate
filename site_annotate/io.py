@@ -28,16 +28,7 @@ RENAME = {
 }
 
 
-def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:
-    """Read a PSM file into a DataFrame."""
-    # Read a PSM file into a DataFrame
-    df = pd.read_csv(psm_file, sep="\t")
-    df = janitor.clean_names(df)
-
-    return df
-
-
-def check_psm_file(df: pd.DataFrame) -> pd.DataFrame:
+def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
     """Check if a DataFrame is a valid PSM file."""
     # Check if a DataFrame is a valid PSM file
     required_cols = ["peptide", "intensity"]
@@ -47,6 +38,16 @@ def check_psm_file(df: pd.DataFrame) -> pd.DataFrame:
 
     # if not any(df.columns.str.startswith("TMT")):
     df = df.rename(columns=RENAME)
+    return df
+
+
+def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:
+    """Read a PSM file into a DataFrame."""
+    # Read a PSM file into a DataFrame
+    df = pd.read_csv(psm_file, sep="\t")
+    df = janitor.clean_names(df)
+    df = prepare_psm_file(df)
+    # breakpoint()
     return df
 
 

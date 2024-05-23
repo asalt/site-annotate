@@ -12,15 +12,6 @@ from . import modisite
 logging.basicConfig(level=logging.INFO)
 
 
-def process_frame(key_frame):
-    key, frame = key_frame
-    subfa = fa[fa["id"] == key]
-    assert len(subfa) == 1
-    seqinfo = subfa.iloc[0].to_dict()
-    res = modisite.main(frame, seqinfo)
-    return res
-
-
 @click.command()
 @click.option("--cores", default=1, show_default=True)
 @click.option(
@@ -40,11 +31,10 @@ def main(cores, psms, out, fasta, **kwargs):
     df = io.read_psm_file(psms[0])
     fa = io.read_fasta(fasta)
 
-    subdf = df.head(int(1e4))
     g = df.groupby("protein")
 
+    # breakpoint()
     fullres = list()
-
     # for key, frame in tqdm(g):
     #     subfa = fa[fa["id"] == key]
     #     assert len(subfa) == 1
@@ -71,7 +61,9 @@ def main(cores, psms, out, fasta, **kwargs):
                 result = future.result()
                 fullres.append(result)
             except Exception as e:
-                print(f"An error occurred: {e}")
+
+                # print(f"An error occurred: {e}")
+                pass
 
     res1 = [x["sty_79_9663"] for x in fullres if x is not None]
     fullres_df = pd.concat(res1, ignore_index=True)
@@ -79,7 +71,7 @@ def main(cores, psms, out, fasta, **kwargs):
     infile = pathlib.Path(psms[0])
     outfile = infile.parent / f"site_annotation_notcondensed.tsv"
 
-    fullres_df.to_csv(outfile)
+    fullres_df.to_csv(outfile, sep="\t", index=False)
 
     # with ProcessPoolExecutor() as executor:
     #     futures = {executor.submit(process_row, row): row for index, row in df.iterrows()}
