@@ -3,6 +3,10 @@ import re
 import pandas as pd
 from collections import defaultdict
 
+from . import log
+
+logger = log.get_logger(__file__)
+
 
 def quant_protein(**kwargs):
     pass

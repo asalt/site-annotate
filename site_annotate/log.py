@@ -1,5 +1,6 @@
 import logging
 
+
 def get_logger(name):
 
     # Create a logger object
@@ -15,7 +16,9 @@ def get_logger(name):
     file_handler.setLevel(logging.INFO)
 
     # Create a logging format
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     console_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
 
