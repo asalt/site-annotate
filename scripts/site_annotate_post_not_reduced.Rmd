@@ -4,7 +4,7 @@ author: "MSPC"
 date: "`r Sys.Date()`"
 output:
   html_document:
-    code_folding: show
+    code_folding: hide
     highlight: zenburn
     toc: yes
     toc_float: false
@@ -45,7 +45,7 @@ library(knitr)
 # Apply the custom hook to all chunks
 # knitr::opts_chunk$set(trycatch = TRUE)
 
-myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T, ...)
+myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T, compact = T, ...)
 ```
 
 
@@ -96,6 +96,8 @@ df <- datas[[1]]
 df %>% dplyr::glimpse()
 ```
 
+# count
+
 ```{r}
 df %>%
   dplyr::filter(AA %in% c("S", "T", "Y")) %>%
@@ -104,14 +106,19 @@ df %>%
   myreactable()
 ```
 
+## all counts
+
 ```{r}
 # Group by 'AA' and count occurrences
 aa_count <- df %>%
   distinct(fifteenmer, .keep_all = T) %>%
   group_by(AA) %>%
   summarize(sites = n())
+
+aa_count %>% myreactable()
 ```
 
+## probability above .75
 
 ```{r}
 # Group by 'AA' and count occurrences
@@ -126,10 +133,15 @@ aa_count <- df %>%
 ```{r}
 # Display the AA count
 aa_count %>% myreactable()
+
 ```
+
+
+# plots
+
 ```{r}
 ggplot(df, aes(x = prob)) +
-  geom_histogram(binwidth = 0.01, fill = "blue", color = "black") +
+  geom_histogram(binwidth = 0.01, fill = "#1c3079", color = "black") +
   theme_minimal() +
   labs(title = "Distribution of Prob", x = "Prob", y = "Count")
 ```
@@ -146,7 +158,9 @@ ggplot(df, aes(x = charge)) +
 
 ```{r}
 ggplot(df, aes(x = intensity)) +
-  geom_histogram(fill = "purple", color = "black") +
+  geom_histogram(fill = "#1c3079", color = "grey50",
+                 binwidth = function(x) 2 * IQR(x) / (length(x)^(1/3))
+) +
   theme_minimal() +
   labs(title = "Distribution of Intensity", x = "Intensity", y = "Count") +
   scale_x_log10() # Log scale for better visualization
