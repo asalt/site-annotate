@@ -6,10 +6,11 @@ from tqdm import tqdm
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from . import log
 from . import io
 from . import modisite
 
-logging.basicConfig(level=logging.INFO)
+logger = log.get_logger(__file__)
 
 
 @click.command()
@@ -28,7 +29,10 @@ def main(cores, psms, out, fasta, **kwargs):
         return
 
     # TODO expand for all psms
+    logger.info(f"loading {psms[0]}")
     df = io.read_psm_file(psms[0])
+      
+    logger.info(f"loading {fasta}")
     fa = io.read_fasta(fasta)
 
     g = df.groupby("protein")
