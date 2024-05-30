@@ -1,0 +1,156 @@
+---
+title: "site-annotate-notreduced"
+author: "MSPC"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    highlight: zenburn
+    toc: yes
+    toc_float: false
+params: 
+  data_dir: NULL
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 100% !important;
+  margin: auto;
+}
+</style>
+
+
+```{r setup, include=T}
+knitr::opts_chunk$set(echo = TRUE)
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(magrittr))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(reactable))
+library(knitr)
+
+# Define a custom chunk hook
+# not quite....
+# knit_hooks$set(trycatch = function(before, options) {
+#   if (before) {
+#     # Before chunk execution, wrap in tryCatch
+#     sprintf("tryCatch({\n")
+#   } else {
+#     # After chunk execution, close tryCatch and handle error
+#     sprintf("}, error = function(e) { knitr::knit_exit() })\n")
+#   }
+# })
+
+# Apply the custom hook to all chunks
+# knitr::opts_chunk$set(trycatch = TRUE)
+
+myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T, ...)
+```
+
+
+# load
+```{r}
+(data_dir <- params$data_dir)
+if (is.null(data_dir)) {
+  ( data_dir <- Sys.getenv("data_dir", unset = ".") )
+  if (is.null(data_dir)) {
+    cat("data dir not set")
+    knitr::knit_exit()
+  }
+}
+
+print(data_dir)
+```
+
+
+```{r}
+(files <- fs::dir_ls(data_dir , regexp = ".*condensed.tsv$", fail = F, recurse = T))
+
+if (length(files) == 0) {
+  cat("no files found")
+  knitr::knit_exit()
+}
+
+datas <- files %>%
+  purrr::set_names(nm = ~ basename(.) %>% fs::path_ext_remove()) %>% # set names first
+  purrr::map(~ {
+    .table <- read_tsv(.x, show_col_types = F)
+    return(.table)
+  })
+```
+
+
+```{r}
+names(datas)
+
+head(datas[[1]])
+```
+
+
+
+```{r}
+df <- datas[[1]]
+
+
+df %>% dplyr::glimpse()
+```
+
+```{r}
+df %>%
+  dplyr::filter(AA %in% c("S", "T", "Y")) %>%
+  head(20) %>%
+  dplyr::select(fifteenmer, protein, position_absolut, everything()) %>%
+  myreactable()
+```
+
+```{r}
+# Group by 'AA' and count occurrences
+aa_count <- df %>%
+  distinct(fifteenmer, .keep_all = T) %>%
+  group_by(AA) %>%
+  summarize(sites = n())
+```
+
+
+```{r}
+# Group by 'AA' and count occurrences
+aa_count <- df %>%
+  distinct(fifteenmer, .keep_all = T) %>%
+  dplyr::filter(prob > .75) %>%
+  group_by(AA) %>%
+  summarize(sites = n())
+```
+
+
+```{r}
+# Display the AA count
+aa_count %>% myreactable()
+```
+```{r}
+ggplot(df, aes(x = prob)) +
+  geom_histogram(binwidth = 0.01, fill = "blue", color = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Prob", x = "Prob", y = "Count")
+```
+
+
+```{r}
+ggplot(df, aes(x = charge)) +
+  geom_bar(fill = "green", color = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Charge", x = "Charge", y = "Count")
+```
+
+
+
+```{r}
+ggplot(df, aes(x = intensity)) +
+  geom_histogram(fill = "purple", color = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Intensity", x = "Intensity", y = "Count") +
+  scale_x_log10() # Log scale for better visualization
+```
+
+
+
