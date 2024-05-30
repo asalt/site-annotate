@@ -19,7 +19,7 @@ RENAME = {
     "sample_10": "TMT_131_N",
     "sample_11": "TMT_131_C",
     "sample_12": "TMT_132_N",
-    "sample_13": "TMT_133_C",
+    "sample_13": "TMT_132_C",
     "sample_14": "TMT_133_N",
     "sample_15": "TMT_133_C",
     "sample_16": "TMT_134_N",
