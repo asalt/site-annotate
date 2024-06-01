@@ -324,6 +324,28 @@ datas_reduced[[1]] %>% head
 ```
 
 
+## combining into a large table
+
+```{r}
+
+# names(datas) %>% stringr::str_extract_all('\\d+')
+
+# this could fail if parent directory of original file is not of form \d+_\d+_\d+
+
+# datas_reduced %<>% purrr::imap(~{
+#   df <- .x 
+#   name <- .y
+#   recrunsearch <- name %>% stringr::str_extract_all('(\\d+)_(\\d+)_(\\d+)')
+#   recrunsearch %<>% stringr::str_split("_") %>% unlist
+#   rec <- recrunsearch[[1]]
+#   run <- recrunsearch[[2]]
+#   search <- recrunsearch[[3]]
+#   df %>% mutate(recno = rec, runno = run, searchno = search)
+# })
+
+```
+
+
 # normalize
 
 
@@ -340,6 +362,20 @@ datas_long <- datas_reduced %>% purrr::map(~{
     mutate(value_norm_log = log2(value_mednorm))
 })
 
+# try to add recrunsearch
+# this could fail if parent directory of original file is not of form \d+_\d+_\d+
+datas_long %<>% purrr::imap(~{
+  df <- .x 
+  name <- .y
+  recrunsearch <- name %>% stringr::str_extract_all('(\\d+)_(\\d+)_(\\d+)')
+  recrunsearch %<>% stringr::str_split("_") %>% unlist
+  rec <- recrunsearch[[1]]
+  run <- recrunsearch[[2]]
+  search <- recrunsearch[[3]]
+  df %>% mutate(recno = rec, runno = run, searchno = search)
+})
+
+
 ```
 
 ```{r, fig.width=9}
@@ -352,11 +388,27 @@ datas_long[[1]] %>%
 
 ```
 
+
+```{r}
+
+df <- bind_rows(datas_reduced)
+```
+
+
+```{r}
+df %>% group_by(recno, runno, searchno) %>% summarize(n=n())
+  
+```
+
+
 # metadata
 
 
 ```{r}
 meta_df <- read_tsv(metadata)
+meta_df$recno %<>% as.character
+meta_df$runno %<>% as.character
+meta_df$searchno %<>% as.character
 ```
 
 ```{r}
@@ -385,5 +437,24 @@ convert_tmt_label("131")  # Should return "TMT_131_N"
 
 meta_df %<>% dplyr::mutate(
   label_full = convert_tmt_label(label)
-)
+) %>% 
+  dplyr::mutate(
+    .orig_label = label,
+    label = label_full
+  )
 ```
+
+
+## combine tables
+
+```{r}
+
+dfl <- df %>% pivot_longer(
+  starts_with("TMT_"),
+  names_to = "label"
+)
+
+dfl %<>% left_join(meta_df)
+
+```
+
