@@ -1,0 +1,64 @@
+---
+title: "test-setup"
+author: "MSPC"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    highlight: zenburn
+    toc: yes
+    toc_float: false
+params:
+  data_dir: NULL
+  metadata: NULL
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 100% !important;
+  margin: auto;
+}
+</style>
+
+
+```{r setup, include=T}
+knitr::opts_chunk$set(echo = TRUE)
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(magrittr))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(reactable))
+library(knitr)
+
+
+myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T, compact = T, ...)
+```
+
+
+# load
+```{r}
+(data_dir <- params$data_dir)
+if (is.null(data_dir)) {
+  ( data_dir <- Sys.getenv("data_dir", unset = ".") )
+  if (is.null(data_dir)) {
+    cat("data dir not set")
+    knitr::knit_exit()
+  }
+}
+print(data_dir)
+```
+
+
+# metadata
+```{r}
+(metadata <- params$metadata)
+if (is.null(metadata)) {
+  ( metadata <- Sys.getenv("metadata", unset = ".") )
+  if (is.null(metadata)) {
+    cat("metadata not set")
+    knitr::knit_exit()
+  }
+}
+print(metadata)
+```

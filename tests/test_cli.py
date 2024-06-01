@@ -1,13 +1,13 @@
 # tests/test_cli.py
 import pytest
 from click.testing import CliRunner
-from site_annotate.cli import main
+from site_annotate.cli import main, run
 
 
 def test_greet():
     runner = CliRunner()
     result = runner.invoke(
-        main,
+        run,
         [
             "--cores",
             "2",
@@ -28,7 +28,7 @@ def test_greet():
 def test_missing_psms():
     runner = CliRunner()
     result = runner.invoke(
-        main, ["--cores", "2", "--out", "output.file", "--fasta", "file.fasta"]
+        run, ["--cores", "2", "--out", "output.file", "--fasta", "file.fasta"]
     )
     assert result.exit_code != 0
     assert "Error" in result.output

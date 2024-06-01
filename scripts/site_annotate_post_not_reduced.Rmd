@@ -8,8 +8,9 @@ output:
     highlight: zenburn
     toc: yes
     toc_float: false
-params: 
+params:
   data_dir: NULL
+  metadata: NULL
 ---
 
 <style type="text/css">

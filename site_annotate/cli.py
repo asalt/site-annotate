@@ -1,4 +1,5 @@
 import sys
+import subprocess
 import logging
 import pathlib
 import click
@@ -14,7 +15,74 @@ from . import modisite
 logger = log.get_logger(__file__)
 
 
-@click.command()
+@click.group(chain=True)
+def main():
+    pass
+
+
+TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "scripts"  # 2 levels up
+if not TEMPLATE_PATH.exists():
+    logger.error(f"Template path not found: {TEMPLATE_PATH}")
+    sys.exit(1)
+REPORT_TEMPLATES = TEMPLATE_PATH.glob("*Rmd")
+REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
+# logger.info(REPORT_TEMPLATES)
+
+
+@main.command()
+@click.option(
+    "-t",
+    "--template",
+    type=click.Choice(REPORT_TEMPLATES.keys()),
+    required=False,
+    default="site_annotate_post_not_reduced",
+    show_default=True,
+)
+@click.option(
+    "-d",
+    "--data-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    required=True,
+    default=pathlib.Path(".").absolute(),
+    show_default=True,
+)
+@click.option(
+    "-o",
+    "--output-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    required=True,
+    default=pathlib.Path(".").absolute(),
+    show_default=True,
+)
+@click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))
+def report(template, data_dir, output_dir, metadata):
+    print(template)
+    template_file = REPORT_TEMPLATES[template]
+
+    # Create a dictionary with all parameters
+    params_dict = {
+        "data_dir": str(data_dir),
+        # "output_dir": str(output_dir),
+        "metadata": str(metadata),
+    }
+    params = "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
+
+    cmd = [
+        f"Rscript",
+        "-e",
+        f"""library(rmarkdown)
+        rmarkdown::render("{template_file}",
+        output_dir="{output_dir}",
+        params={params},
+        )""",
+    ]
+
+    logger.info(cmd)
+
+    subprocess.run(cmd)
+
+
+@main.command()
 @click.option("--cores", default=1, show_default=True)
 @click.option(
     "-p", "--psms", type=click.Path(exists=True, dir_okay=False), multiple=True
@@ -23,7 +91,7 @@ logger = log.get_logger(__file__)
 @click.option(
     "-f", "--fasta", type=click.Path(exists=True, dir_okay=False), help="fasta file"
 )
-def main(cores, psms, out, fasta, **kwargs):
+def run(cores, psms, out, fasta, **kwargs):
 
     DECOY_FLAG = "rev_"
 
