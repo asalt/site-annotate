@@ -50,14 +50,18 @@ REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
     "-o",
     "--output-dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    required=True,
-    default=pathlib.Path(".").absolute(),
+    required=False,
+    default=None,
     show_default=True,
+    help="Output directory, defaults to data_dir if not explictely set",
 )
 @click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))
 def report(template, data_dir, output_dir, metadata):
     print(template)
     template_file = REPORT_TEMPLATES[template]
+
+    if output_dir is None:
+        output_dir = data_dir
 
     # Create a dictionary with all parameters
     params_dict = {
