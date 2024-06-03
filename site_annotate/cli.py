@@ -4,6 +4,7 @@ import functools
 import logging
 import pathlib
 import click
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import pandas as pd
@@ -198,17 +199,43 @@ def run(cores, psms, out, fasta, **kwargs):
                     # print(f"An error occurred: {e}")
                     pass
 
-    res1 = [x.get("sty_79_9663") for x in fullres if x is not None]
-    res1 = [x for x in res1 if x is not None]
-    if len(res1) == 0:
-        logger.error("no results returned")
-        sys.exit(1)
-    fullres_df = pd.concat(res1, ignore_index=True)
+    VALID_COLS = [
+        "sty_79_9663",
+        "k_42_0106",
+        "k_43_0058",
+    ]
 
+    fullres = list(filter(None, fullres))
+
+    finalres = dict()
+    for col in VALID_COLS:
+        frames = list()
+        for items in fullres:
+            vals = items.get(col)
+            if vals is None:
+                continue
+            # vals = [x for x in vals if x is not None]
+            if len(vals) == 0:
+                logger.warning(f"no results returned for {col}")
+                continue
+            frames.append(vals)
+        if len(frames) != 0:
+            finalres[col] = pd.concat(frames, ignore_index=True)
+    # res1 = [x.get("sty_79_9663") for x in fullres if x is not None]
+    # res1 = [x for x in res1 if x is not None]
+    # if len(res1) == 0:
+    #     logger.error("no results returned")
+    #     sys.exit(1)
+
+    # fullres_df = pd.concat(res1, ignore_index=True)
+    import ipdb
+
+    ipdb.set_trace()
     infile = pathlib.Path(psms[0])
-    outfile = infile.parent / f"site_annotation_notreduced.tsv"
-
-    fullres_df.to_csv(outfile, sep="\t", index=False)
+    for key, val in finalres.items():
+        outfile = infile.parent / f"{key}_site_annotation_notreduced.tsv"
+        logger.info(f"writing {outfile}")
+        val.to_csv(outfile, sep="\t", index=False)
 
     # with ProcessPoolExecutor() as executor:
     #     futures = {executor.submit(process_row, row): row for index, row in df.iterrows()}

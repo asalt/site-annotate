@@ -74,13 +74,20 @@ def quant_isobaric_site(psms_positions):
 def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
 
     sequence = seqinfo["sequence"]
-    VALID_COLS = ["sty_79_9663"]
+    VALID_COLS = [
+        "sty_79_9663",
+        "k_42_0106",
+        "k_43_0058",
+    ]
+
     RESULTS = dict()
     # breakpoint()
 
     for col in VALID_COLS:
+        if col not in df.columns:
+            continue
         if len(df[~df[col].isna()]) == 0:
-            return
+            continue
 
         res = df[~df[col].isna()][col].apply(extract_positions)
         res_df = res.apply(position_dict_to_df)
