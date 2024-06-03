@@ -103,13 +103,20 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
             lambda x: create_15mer(sequence, x["position_absolut"]), axis=1
         )
 
+        df_positions["protein_length"] = len(sequence)
+
         if isobaric:
             df_positions = quant_isobaric_site(df_positions)
 
         best_probability_col = col + "_best_localization"
+
+        maxprob = df_positions.groupby("spectrum")[best_probability_col].max()
+        maxprob.name = "highest_prob"
+        df_positions = df_positions.merge(maxprob, left_on="spectrum", right_index=True)
+
         df_positions_filtered = df_positions[
             (df_positions.prob > 0.5)
-            | (df_positions.prob == df_positions[best_probability_col])
+            | (df_positions.prob >= df_positions["highest_prob"])
         ]
 
         # psms_positions.groupby("15mer").apply(quant_protein)
