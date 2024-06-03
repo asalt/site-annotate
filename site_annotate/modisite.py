@@ -110,9 +110,12 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
 
         best_probability_col = col + "_best_localization"
 
-        maxprob = df_positions.groupby("spectrum")[best_probability_col].max()
+        maxprob = df_positions.groupby("spectrum", "peptide")[
+            best_probability_col
+        ].max()
         maxprob.name = "highest_prob"
-        df_positions = df_positions.merge(maxprob, left_on="spectrum", right_index=True)
+        maxprob = maxprob.reset_index()
+        df_positions = df_positions.merge(maxprob, on=["spectrum", "peptide"])
 
         df_positions_filtered = df_positions[
             (df_positions.prob > 0.5)
