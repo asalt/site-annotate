@@ -63,8 +63,7 @@ myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T
 # load
 ```{r}
 (data_dir <- params$data_dir)
-data_dir <- "/media/alex/Expansion/MSPC001141/data/processed/phos/fragpipe_current"
-data_dir <- "/media/alex/Expansion/MSPC000668/data/processed/phos/fragpipe"
+data_dir <- "/media/alex/Expansion/MSPC001141/data/processed/acetyl/fragpipe/"
 
 if (is.null(data_dir)) {
   ( data_dir <- Sys.getenv("data_dir", unset = ".") )
@@ -89,14 +88,15 @@ if (length(files) == 0) {
 
 my_set_name <- io_tools$set_name
 
+.names <- files %>% purrr::map(io_tools$set_name)
 datas <- files %>%
-  purrr::set_names(nm = ~ my_set_name(.)) %>% # set names first
+  purrr::set_names(nm = .names) %>% # set names first
   purrr::map(~ {
     .table <- read_tsv(.x, show_col_types = F)
     return(.table)
   })
 
-file_path_names <- list(files)
+file_path_names <- files %>% as.list
 names(file_path_names) <- names(datas)
 
 # datas %<>% purrr::map(
@@ -154,15 +154,15 @@ names(datas)
 ```
 
 ```{r}
-head(datas[[1]]) %>%
-  dplyr::select(
-      # protein,
-      ENSP, ENST, ENSG, geneid, taxon, symbol, fifteenmer,
-      peptide,
-      modified_peptide,
-      sty_79_9663
-  ) %>%
-  myreactable()
+# head(datas[[1]]) %>%
+#   dplyr::select(
+#       # protein,
+#       ENSP, ENST, ENSG, geneid, taxon, symbol, fifteenmer,
+#       peptide,
+#       modified_peptide,
+#       sty_79_9663
+#   ) %>%
+#   myreactable()
 ```
 
 
@@ -173,7 +173,7 @@ head(datas[[1]]) %>%
 
 ```{r}
 datas[[1]] %>%
-  dplyr::filter(AA %in% c("S", "T", "Y")) %>%
+  # dplyr::filter(AA %in% c("S", "T", "Y")) %>%
   head(20) %>%
   dplyr::select(fifteenmer, protein, position_absolut, everything()) %>%
   myreactable()
@@ -297,7 +297,7 @@ datas_reduced <- reduce_tools$reduce_sites(datas, geneinfo)
 
 ```{r, label='add sitename'}
 modi_abbrev <- params$modi_abbrev
-modi_abbrev <- 'p'
+modi_abbrev <- 'ac'
 # annotate with other info
 possible_id_cols <- c("ENSG", "ENST", "ENSP", "geneid", "symbol", "taxon", "fifteenmer", "position", "AA", "sitename", "protein_length")
 .metadatas <- datas %>% purrr::map(~{
@@ -458,7 +458,8 @@ datas_reduced %>% purrr::imap(~{
   dfm <- left_join(df, isoform_selection)
   orig_path <- file_path_names[[name]]
   rootdir <- fs::path_dir(orig_path)
-  newfile <- fs::path_join(c(rootdir, "site_annotation_reduced.tsv"))
+  
+  newfile <- fs::path_join(c(rootdir, paste0(str_replace(.y, 'notreduced', "reduced"), ".tsv")))
   # print(orig_path)
   print(newfile)
   ._ <- readr::write_tsv(df, newfile)
