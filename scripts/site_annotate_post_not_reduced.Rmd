@@ -31,6 +31,11 @@ suppressPackageStartupMessages(library(ComplexHeatmap))
 suppressPackageStartupMessages(library(circlize))
 suppressPackageStartupMessages(library(reactable))
 library(knitr)
+suppressPackageStartupMessages(library(here))
+
+src_dir <- file.path(here("R"))
+io_tools <- new.env()
+source(file.path(src_dir, "./io.R"), local = io_tools)
 
 # Define a custom chunk hook
 # not quite....
@@ -55,6 +60,8 @@ myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T
 ```{r}
 (data_dir <- params$data_dir)
 (metadata <- params$metadata)
+data_dir <- "/media/alex/Expansion/MSPC001141/data/processed/phos/fragpipe_current"
+metadata <- "/media/alex/Expansion/MSPC001141/data/processed/phos/fragpipe_current/metadata.tsv"
 
 if (is.null(data_dir)) {
   ( data_dir <- Sys.getenv("data_dir", unset = ".") )
@@ -69,29 +76,15 @@ print(data_dir)
 
 
 ```{r}
-(files <- fs::dir_ls(data_dir , regexp = ".*condensed.tsv$", fail = F, recurse = T))
+(files <- fs::dir_ls(data_dir , regexp = ".*reduced.tsv$", fail = F, recurse = T))
 
 if (length(files) == 0) {
   cat("no files found")
   knitr::knit_exit()
 }
 
-my_set_name <- function(f){
-  .path_split <- fs::path_split(f) %>% unlist()
-  .path_split_len <- length(.path_split)
-  if (.path_split_len == 1){
-    .res <- fs::path_ext_remove(.path_split[1]) 
-  }
-  else {
-    .res <- paste( .path_split[.path_split_len - 1] %>% make.names(),
-              .path_split[.path_split_len] %>% fs::path_ext_remove() %>% make.names(),
-              sep = "_"
-    )
-  }
-  return(.res)
-}
-my_set_name('test.blah')
-my_set_name('/first/second/third/test.blah')
+
+my_set_names <- io_tools$set_name
 
 datas <- files %>%
   purrr::set_names(nm = ~ my_set_name(.)) %>% # set names first
@@ -100,6 +93,9 @@ datas <- files %>%
     return(.table)
   })
 
+file_path_names <- list(files)
+names(file_path_names) <- names(datas)
+
 datas %<>% purrr::map(
   ~ {
     .x %>% dplyr::filter(AA %in% c("S", "T", "Y"))
@@ -107,38 +103,7 @@ datas %<>% purrr::map(
 )
 
 
-
-extract_key_value_pairs <- function(input_string) {
-  # Split the string by '|'
-  elements <- unlist(strsplit(input_string, "\\|"))
-  
-  # Initialize empty lists for keys and values
-  keys <- character()
-  values <- character()
-  
-  # Iterate over the elements to form key-value pairs
-  for (i in seq_along(elements)) {
-    # When i is odd, it's a key, when even, it's a value
-    if (i %% 2 == 1) {
-      # Next element should be value unless we are at the end or next is a key
-      if (i < length(elements) && !(elements[i + 1] %in% c("ENSP", "ENST", "ENSG", "geneid", "taxon", "symbol"))) {
-        keys <- c(keys, elements[i])
-        values <- c(values, elements[i + 1])
-      } else {
-        # Handle cases where a key might not have a following value or next is a key
-        next()
-        # keys <- c(keys, elements[i])
-        # values <- c(values, NA)
-      }
-    }
-  }
-  
-  # Combine into a named vector
-  named_vector <- setNames(values, keys)
-  
-  return(named_vector)
-}
-
+extract_key_value_pairs <- io_tools$extract_key_value_pairs
 input_string <- "ENSP|ENSMUSP00000001963|ENST|ENSMUST00000001963|ENSG|ENSMUSG00000020681|geneid|11421|taxon|10090|symbol|Ace|Ace"
 ( key_value_pairs <- extract_key_value_pairs(input_string) )
 
@@ -321,140 +286,22 @@ datas_reduced %<>% purrr::map( ~{
   } )
 datas_reduced[[1]] %>% head
 
-```
 
-
-## combining into a large table
-
-```{r}
-
-# names(datas) %>% stringr::str_extract_all('\\d+')
-
-# this could fail if parent directory of original file is not of form \d+_\d+_\d+
-
-# datas_reduced %<>% purrr::imap(~{
-#   df <- .x 
-#   name <- .y
-#   recrunsearch <- name %>% stringr::str_extract_all('(\\d+)_(\\d+)_(\\d+)')
-#   recrunsearch %<>% stringr::str_split("_") %>% unlist
-#   rec <- recrunsearch[[1]]
-#   run <- recrunsearch[[2]]
-#   search <- recrunsearch[[3]]
-#   df %>% mutate(recno = rec, runno = run, searchno = search)
-# })
 
 ```
 
+# export 
+```{r, label='do export'}
 
-# normalize
-
-
-```{r}
-
-datas_long <- datas_reduced %>% purrr::map(~{
+datas_reduced  %>% purrr::imap(~{
   df <- .x
-  common_cols <- intersect(colnames(geneinfo), colnames(df))  # Check against the first dataframe or ensure it's generalizable
-  df %>%
-    pivot_longer(-c('fifteenmer', common_cols), names_to = 'label', values_to = 'value') %>% 
-    group_by(label, taxon) %>% 
-    mutate(value_mednorm = value / median(value, na.rm = T)) %>% 
-    ungroup %>% 
-    mutate(value_norm_log = log2(value_mednorm))
-})
-
-# try to add recrunsearch
-# this could fail if parent directory of original file is not of form \d+_\d+_\d+
-datas_long %<>% purrr::imap(~{
-  df <- .x 
   name <- .y
-  recrunsearch <- name %>% stringr::str_extract_all('(\\d+)_(\\d+)_(\\d+)')
-  recrunsearch %<>% stringr::str_split("_") %>% unlist
-  rec <- recrunsearch[[1]]
-  run <- recrunsearch[[2]]
-  search <- recrunsearch[[3]]
-  df %>% mutate(recno = rec, runno = run, searchno = search)
+  orig_path <- file_path_names[[name]]
+  rootdir <- fs::path_dir(orig_path)
+  newfile <- fs::path_join(c(rootdir, "site_annotation_reduced.tsv"))
+  print(orig_path)
+  readr::write_tsv(df, newfile)
 })
-
-
 ```
 
-```{r, fig.width=9}
-
-datas_long[[1]] %>% 
-  dplyr::filter(taxon != '') %>% 
-  ggplot(aes(x = label, y = value_norm_log, fill = taxon)) +
-  geom_violin() +
-  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
-
-```
-
-
-```{r}
-
-df <- bind_rows(datas_reduced)
-```
-
-
-```{r}
-df %>% group_by(recno, runno, searchno) %>% summarize(n=n())
-  
-```
-
-
-# metadata
-
-
-```{r}
-meta_df <- read_tsv(metadata)
-meta_df$recno %<>% as.character
-meta_df$runno %<>% as.character
-meta_df$searchno %<>% as.character
-```
-
-```{r}
-
-convert_tmt_label <- function(shorthand) {
-  normalized_input <- str_remove_all(shorthand, "TMT[_]?")
-  case_when(
-    normalized_input == "126" ~ "TMT_126",
-    normalized_input == "131" ~ "TMT_131_N",
-    normalized_input == "134" ~ "TMT_134_N",
-    grepl("N$", normalized_input) ~ sub("(\\d+)(N)", "TMT_\\1_N", normalized_input),
-    grepl("C$", normalized_input) ~ sub("(\\d+)(C)", "TMT_\\1_C", normalized_input),
-    TRUE ~ paste0("TMT_", normalized_input)
-  )
-}
-
-# Examples of using the function
-convert_tmt_label("126")  # Should return "TMT_126"
-convert_tmt_label("TMT_126")  # Should return "TMT_126"
-convert_tmt_label("TMT126")  # Should return "TMT_126"
-convert_tmt_label("127N") # Should return "TMT_127_N"
-convert_tmt_label("127C") # Should return "TMT_127_C"
-convert_tmt_label("131")  # Should return "TMT_131_N"
-
-
-
-meta_df %<>% dplyr::mutate(
-  label_full = convert_tmt_label(label)
-) %>% 
-  dplyr::mutate(
-    .orig_label = label,
-    label = label_full
-  )
-```
-
-
-## combine tables
-
-```{r}
-
-dfl <- df %>% pivot_longer(
-  starts_with("TMT_"),
-  names_to = "label"
-)
-
-dfl %<>% left_join(meta_df)
-
-```
 
