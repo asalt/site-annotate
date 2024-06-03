@@ -34,7 +34,7 @@ suppressPackageStartupMessages(library(reactable))
 library(knitr)
 suppressPackageStartupMessages(library(here))
 
-src_dir <- file.path(here("R"))
+src_dir <- file.path(here())
 io_tools <- new.env()
 source(file.path(src_dir, "./io.R"), local = io_tools)
 

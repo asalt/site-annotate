@@ -124,7 +124,6 @@ def report(template, data_dir, output_dir, metadata, **kwargs):
 
 
 @main.command()
-@common_options
 @click.option(
     "-o",
     "--output-dir",
