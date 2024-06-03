@@ -21,8 +21,11 @@ reduce_sites <- function(datas, geneinfo, n_workers = NA, ...) {
         furrr::future_map_dfr(
           function(.data) {
             tidyr::unnest(.data, grouped_data) %>%
-              group_by(fifteenmer, !!!rlang::syms(common_cols)) %>%
-              summarise(out = across(matches("TMT_.*intensity$"), .fns = \(x) sum(x, na.rm = TRUE))) %>%
+              group_by(fifteenmer, !!!rlang::syms(common_cols), ) %>%
+              summarise(
+                out = across(matches("TMT_.*intensity$"), .fns = \(x) sum(x, na.rm = TRUE)),
+                .groups = "drop"
+              ) %>%
               ungroup() %>%
               unnest(out)
           }
