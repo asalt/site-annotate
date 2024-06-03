@@ -495,7 +495,7 @@ datas_reduced %>% purrr::imap(~ {
   newfile <- fs::path_join(c(rootdir, paste0(str_replace(.y, "notreduced", "reduced"), ".tsv")))
   # print(orig_path)
   print(newfile)
-  ._ <- readr::write_tsv(df, newfile)
+  ._ <- readr::write_tsv(dfm, newfile)
 })
 ```
 
