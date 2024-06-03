@@ -95,6 +95,7 @@ def report(template, data_dir, output_dir, metadata):
     print(template)
     template_file = REPORT_TEMPLATES[template]
 
+    data_dir = pathlib.Path(data_dir).absolute()
     if output_dir is None:
         output_dir = data_dir
 
@@ -228,9 +229,7 @@ def run(cores, psms, out, fasta, **kwargs):
     #     sys.exit(1)
 
     # fullres_df = pd.concat(res1, ignore_index=True)
-    import ipdb
 
-    ipdb.set_trace()
     infile = pathlib.Path(psms[0])
     for key, val in finalres.items():
         outfile = infile.parent / f"{key}_site_annotation_notreduced.tsv"

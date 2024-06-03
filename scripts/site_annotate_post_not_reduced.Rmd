@@ -1,3 +1,4 @@
+---
 title: "site-annotate-notreduced"
 author: "MSPC"
 date: "`r Sys.Date()`"
@@ -36,6 +37,9 @@ suppressPackageStartupMessages(library(here))
 src_dir <- file.path(here("R"))
 io_tools <- new.env()
 source(file.path(src_dir, "./io.R"), local = io_tools)
+
+reduce_tools <- new.env()
+source(file.path(src_dir, "./reduce.R"), local = reduce_tools)
 
 # Define a custom chunk hook
 # not quite....
@@ -83,7 +87,7 @@ if (length(files) == 0) {
 }
 
 
-my_set_names <- io_tools$set_name
+my_set_name <- io_tools$set_name
 
 datas <- files %>%
   purrr::set_names(nm = ~ my_set_name(.)) %>% # set names first
@@ -95,11 +99,11 @@ datas <- files %>%
 file_path_names <- list(files)
 names(file_path_names) <- names(datas)
 
-datas %<>% purrr::map(
-  ~ {
-    .x %>% dplyr::filter(AA %in% c("S", "T", "Y"))
-  }
-)
+# datas %<>% purrr::map(
+#   ~ {
+#     .x %>% dplyr::filter(AA %in% c("S", "T", "Y"))
+#   }
+# )
 
 
 extract_key_value_pairs <- io_tools$extract_key_value_pairs
@@ -109,10 +113,10 @@ input_string <- "ENSP|ENSMUSP00000001963|ENST|ENSMUST00000001963|ENSG|ENSMUSG000
 
 
 .all_proteins <- datas %>% purrr::map(~{.x %>% distinct(protein) %>% pull(protein)}) %>% unlist() %>% unique()
-.res <- .all_proteins %>% 
+.res <- .all_proteins %>%
   purrr::map(
     extract_key_value_pairs
-  ) 
+  )
 .res <- set_names(.res, .all_proteins)  # Ensure names are set for each element in the list
 geneinfo <- .res %>%
   purrr::imap_dfr(~{
@@ -125,15 +129,15 @@ geneinfo <- .res %>%
 
 
 geneinfo_counts <- geneinfo %>%
-  pivot_longer(-protein) %>% 
-  group_by(name) %>% 
+  pivot_longer(-protein) %>%
+  group_by(name) %>%
   summarize( n = sum(!is.na(value)) )
 geneinfo_counts %<>% dplyr::filter( n > 1 )
 geneinfo %<>% dplyr::select( protein, all_of(geneinfo_counts$name) )
 geneinfo <- geneinfo %>%
   mutate(across(everything(), ~ replace_na(., "")))
 
-  
+
 
 datas %<>% purrr::map(
   ~{
@@ -150,14 +154,14 @@ names(datas)
 ```
 
 ```{r}
-head(datas[[1]]) %>% 
+head(datas[[1]]) %>%
   dplyr::select(
       # protein,
       ENSP, ENST, ENSG, geneid, taxon, symbol, fifteenmer,
       peptide,
       modified_peptide,
       sty_79_9663
-  ) %>% 
+  ) %>%
   myreactable()
 ```
 
@@ -217,7 +221,7 @@ datas[[1]] %>% ggplot(aes(x = prob)) +
 
 
 ```{r}
-datas[[1]] %>% 
+datas[[1]] %>%
   ggplot(aes(x = charge)) +
   geom_bar(fill = "green", color = "black") +
   theme_minimal() +
@@ -227,7 +231,7 @@ datas[[1]] %>%
 
 
 ```{r}
-datas[[1]] %>% 
+datas[[1]] %>%
   ggplot(aes(x = intensity)) +
   geom_histogram(fill = "#1c3079", color = "grey50",
                  binwidth = function(x) 2 * IQR(x) / (length(x)^(1/3))
@@ -247,8 +251,8 @@ datas[[1]] %>%
 #   ~{
 #     common_cols <- intersect(colnames(geneinfo), colnames(.x))  # Check against the first dataframe or ensure it's generalizable
 #     .x %>%
-#       head(1000) %>% 
-#       #group_by(fifteenmer, all_of(colnames(geneinfo))) %>% 
+#       head(1000) %>%
+#       #group_by(fifteenmer, all_of(colnames(geneinfo))) %>%
 #       group_by(fifteenmer, !!!rlang::syms(common_cols)) %>%
 #       summarise(across(matches("TMT_.*intensity$"), sum, na.rm = TRUE), .groups = "drop")
 #       # sum up all the columns that are of form TMT_xxx_x_intensity
@@ -256,35 +260,37 @@ datas[[1]] %>%
 # )
 
 
-n_workers <- future::availableCores() - 1
+# n_workers <- future::availableCores() - 1
+#
+# future::plan(future::multisession, workers = n_workers)
+# # from https://stackoverflow.com/a/69008715
+# datas_reduced <- datas %>%
+#   purrr::map(~{
+#     common_cols <- intersect(colnames(geneinfo), colnames(.x))  # Check against the first dataframe or ensure it's generalizable
+#     .data_chunks <- .x %>%
+#       group_nest(fifteenmer, !!!rlang::syms(common_cols), .key = "grouped_data") %>%
+#       dplyr::mutate(.worker_id = sample(1:n_workers, replace=T, size=nrow(.))) %>%
+#       dplyr::group_split(.worker_id, .keep=F)
+#     .data_chunks %>%
+#       furrr::future_map_dfr(
+#         function(.data) tidyr::unnest(.data, grouped_data) %>%
+#           group_by(fifteenmer, !!!rlang::syms(common_cols)) %>%
+#           summarise(out = across(matches("TMT_.*intensity$"), .fns = \(x) sum(x, na.rm = TRUE) )) %>%
+#           ungroup() %>%
+#           unnest(out)
+#       )
+#   }
+#   )
+#
+# datas_reduced %<>% purrr::map( ~{
+#   .newnames <- colnames(.x) %>% str_remove('_intensity')
+#   colnames(.x) <- .newnames
+#   return(.x)
+#   } )
+# datas_reduced[[1]] %>% head
 
-future::plan(future::multisession, workers = n_workers)
-# from https://stackoverflow.com/a/69008715
-datas_reduced <- datas %>% 
-  purrr::map(~{
-    common_cols <- intersect(colnames(geneinfo), colnames(.x))  # Check against the first dataframe or ensure it's generalizable
-    .data_chunks <- .x %>%
-      group_nest(fifteenmer, !!!rlang::syms(common_cols), .key = "grouped_data") %>%
-      dplyr::mutate(.worker_id = sample(1:n_workers, replace=T, size=nrow(.))) %>% 
-      dplyr::group_split(.worker_id, .keep=F) 
-    .data_chunks %>% 
-      furrr::future_map_dfr(
-        function(.data) tidyr::unnest(.data, grouped_data) %>% 
-          group_by(fifteenmer, !!!rlang::syms(common_cols)) %>%
-          summarise(out = across(matches("TMT_.*intensity$"), .fns = \(x) sum(x, na.rm = TRUE) )) %>% 
-          ungroup() %>% 
-          unnest(out)
-      )
-  }
-  )
 
-datas_reduced %<>% purrr::map( ~{ 
-  .newnames <- colnames(.x) %>% str_remove('_intensity')
-  colnames(.x) <- .newnames
-  return(.x)
-  } )
-datas_reduced[[1]] %>% head
-
+datas_reduced <- reduce_tools$reduce_sites(datas, geneinfo)
 
 
 ```
@@ -293,11 +299,11 @@ datas_reduced[[1]] %>% head
 modi_abbrev <- params$modi_abbrev
 modi_abbrev <- 'p'
 # annotate with other info
-possible_id_cols <- c("ENSG", "ENST", "ENSP", "geneid", "symbol", "taxon", "fifteenmer", "position", "AA", "sitename")
+possible_id_cols <- c("ENSG", "ENST", "ENSP", "geneid", "symbol", "taxon", "fifteenmer", "position", "AA", "sitename", "protein_length")
 .metadatas <- datas %>% purrr::map(~{
     common_cols <- intersect(colnames(.x), possible_id_cols)
   res = .x %>%
-    distinct(!!!rlang::syms(common_cols)) %>% 
+    distinct(!!!rlang::syms(common_cols)) %>%
     mutate(sitename = stringr::str_c(symbol, stringr::str_c(!!modi_abbrev, AA, position), sep='_'))
 })
 .metadata <- bind_rows(.metadatas) %>% distinct()
@@ -335,7 +341,7 @@ datas_reduced_withisoind <- datas_reduced %>%
   })
 
 
-.df <- datas_reduced_withisoind [[1]]
+
 
 condense_group <- function(df) {
     # Early exit if the data frame is empty
@@ -351,19 +357,23 @@ condense_group <- function(df) {
   }
 
   # Handle NAs and create protein lists
+  df$Primary_select <- ifelse(is.na(df$Primary_select), "", df$Primary_select)
+  df$Secondary_select <- ifelse(is.na(df$Secondary_select), "", df$Primary_select)
   df$ENSP <- ifelse(is.na(df$ENSP), "", df$ENSP)
-  proteins <- paste(df$ENSP, collapse="; ")
-  aapos_list <- paste(as.character(df$position), collapse="; ")
+  proteins <- paste(unique(df$ENSP), collapse=";")
+  aapos_list <- paste(as.character(df$position), collapse=";")
 
   # Processing selections
-  primarysel <- if (any(df$primary_select == "Yes")) {
-    paste(df$ENSP[df$primary_select == "Yes"], collapse=", ")
+  primarysel <- if (any(df$Primary_select == "Yes")) {
+    .val <- df$ENSP[df$Primary_select == "Yes"] %>% unique()
+    paste(.val, collapse=";")
   } else {
     NA
   }
 
-  secondarysel <- if (any(df$secondary_select == "Yes")) {
-    paste(df$ENSP[df$secondary_select == "Yes"], collapse=", ")
+  secondarysel <- if (any(df$Secondary_select == "Yes")) {
+    .val <- df$ENSP[df$Secondary_select == "Yes"] %>% unique()
+    paste(.val, collapse=';')
   } else {
     NA
   }
@@ -375,7 +385,7 @@ condense_group <- function(df) {
     if (length(unique(df$ENSP)) == 1) {
       uniquesel <- proteins
     } else if (length(unique(df$ENSP)) > 1) {
-      bestsel <- df[which.max(df$protein_length), "Protein"]
+      bestsel <- df[which.max(df$protein_length), "ENSP"][[1,1]]
     }
   }
 
@@ -416,31 +426,42 @@ condense_group <- function(df) {
 
 }
 
-# .res <- .df %>% 
-#   head(40) %>% 
-#   group_by(fifteenmer,
-#            geneid,
-#            ENSG
-#            ) %>% 
-#    summarise(data_summary = list(condense_group(cur_data())), .groups = 'drop')
+#df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "RPKPSSsPVIFAGGQ" & ENSG == "ENSG00000197111")
+# .a1 = 'AAQSPPsPASAEALL'
+# .a2 = '283638'
+# .a3 = 'ENSG00000099814'
+# df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == .a1 & ENSG == .a3)
+# df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "AAAAAAsGVTTGKPP", geneid == "11129", ENSG == "ENSG00000104859")
+df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "AAAAAHsTPVRREVT", geneid == "23136", ENSG == "ENSG00000082397")
+df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "AESPETsAVESTQST", geneid == "100710" )
+.res <- datas_reduced_withisoind[[1]] %>%
+  group_by(fifteenmer,
+           geneid,
+           ENSG,
+           # position
+           .add = TRUE
+           ) %>%
+   summarise(data_summary = list(condense_group(cur_data())), .groups = 'drop') 
+isoform_selection <- .res %>% unnest_wider(data_summary)
 
-  
 
 ```
 
 
 
-# export 
+# export
 ```{r, label='do export'}
 
-datas_reduced  %>% purrr::imap(~{
+datas_reduced %>% purrr::imap(~{
   df <- .x
   name <- .y
+  dfm <- left_join(df, isoform_selection)
   orig_path <- file_path_names[[name]]
   rootdir <- fs::path_dir(orig_path)
   newfile <- fs::path_join(c(rootdir, "site_annotation_reduced.tsv"))
-  print(orig_path)
-  readr::write_tsv(df, newfile)
+  # print(orig_path)
+  print(newfile)
+  ._ <- readr::write_tsv(df, newfile)
 })
 ```
 
