@@ -1,5 +1,6 @@
 import sys
 import subprocess
+import functools
 import logging
 import pathlib
 import click
@@ -30,6 +31,57 @@ REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
 
 
 @main.command()
+def show_templates():
+    for k, v in REPORT_TEMPLATES.items():
+        print(k, v)
+
+
+def common_options(f):
+    f = click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))(
+        f
+    )
+    f = click.option(
+        "-o",
+        "--output-dir",
+        type=click.Path(exists=True, file_okay=False, dir_okay=True),
+        required=False,
+        default=None,
+        show_default=True,
+        help="Output directory, defaults to data_dir if not explicitly set",
+    )(f)
+    f = click.option(
+        "-d",
+        "--data-dir",
+        type=click.Path(exists=True, file_okay=False, dir_okay=True),
+        required=True,
+        default=pathlib.Path(".").absolute(),
+        show_default=True,
+    )(f)
+    return f
+
+
+# @click.option(
+#     "-d",
+#     "--data-dir",
+#     type=click.Path(exists=True, file_okay=False, dir_okay=True),
+#     required=True,
+#     default=pathlib.Path(".").absolute(),
+#     show_default=True,
+# )
+# @click.option(
+#     "-o",
+#     "--output-dir",
+#     type=click.Path(exists=True, file_okay=False, dir_okay=True),
+#     required=False,
+#     default=None,
+#     show_default=True,
+#     help="Output directory, defaults to data_dir if not explictely set",
+# )
+# @click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))
+
+
+@main.command()
+@common_options
 @click.option(
     "-t",
     "--template",
@@ -38,24 +90,6 @@ REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
     default="site_annotate_post_not_reduced",
     show_default=True,
 )
-@click.option(
-    "-d",
-    "--data-dir",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    required=True,
-    default=pathlib.Path(".").absolute(),
-    show_default=True,
-)
-@click.option(
-    "-o",
-    "--output-dir",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True),
-    required=False,
-    default=None,
-    show_default=True,
-    help="Output directory, defaults to data_dir if not explictely set",
-)
-@click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))
 def report(template, data_dir, output_dir, metadata):
     print(template)
     template_file = REPORT_TEMPLATES[template]
@@ -84,6 +118,16 @@ def report(template, data_dir, output_dir, metadata):
     logger.info(cmd)
 
     subprocess.run(cmd)
+
+
+@main.command()
+@common_options
+def reduce_sites(**kwargs):
+    report(template="site_annotate_post_reduced", **kwargs)
+
+
+# import ipdb
+# ipdb.set_trace()
 
 
 @main.command()
@@ -149,14 +193,15 @@ def run(cores, psms, out, fasta, **kwargs):
                     # print(f"An error occurred: {e}")
                     pass
 
-    res1 = [x["sty_79_9663"] for x in fullres if x is not None]
+    res1 = [x.get("sty_79_9663") for x in fullres if x is not None]
+    res1 = [x for x in res1 if x is not None]
     if len(res1) == 0:
         logger.error("no results returned")
         sys.exit(1)
     fullres_df = pd.concat(res1, ignore_index=True)
 
     infile = pathlib.Path(psms[0])
-    outfile = infile.parent / f"site_annotation_notcondensed.tsv"
+    outfile = infile.parent / f"site_annotation_notreduced.tsv"
 
     fullres_df.to_csv(outfile, sep="\t", index=False)
 

@@ -1,0 +1,181 @@
+---
+title: "meta_analysis"
+author: "BCM MSPC"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    highlight: zenburn
+    toc: yes
+    toc_float: false
+params:
+  data_dir: NULL
+  metadata: NULL
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+suppressPackageStartupMessages(library(rlang))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(magrittr))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(reactable))
+library(knitr)
+suppressPackageStartupMessages(library(here))
+
+src_dir <- file.path(here("R"))
+io_tools <- new.env()
+source(file.path(src_dir, "./io.R"), local = io_tools)
+```
+
+
+# load
+
+```{r, label='get params'}
+(data_dir <- params$data_dir)
+(metadata <- params$metadata)
+
+# metadata <- "/media/alex/Expansion/MSPC001141/data/processed/phos/fragpipe_current/metadata.tsv"
+
+if (is.null(data_dir)) {
+  ( data_dir <- Sys.getenv("data_dir", unset = ".") )
+  if (is.null(data_dir)) {
+    cat("data dir not set")
+    knitr::knit_exit()
+  }
+}
+
+print(data_dir)
+```
+
+
+
+```{r, label='get tables'}
+
+(files <- fs::dir_ls(data_dir , regexp = ".*_reduced.tsv$", fail = F, recurse = T))
+
+if (length(files) == 0) {
+  cat("no files found")
+  knitr::knit_exit()
+}
+
+
+my_set_names <- io_tools$set_name
+
+datas <- files %>%
+  purrr::set_names(nm = ~ my_set_name(.)) %>% # set names first
+  purrr::map(~ {
+    .table <- read_tsv(.x, show_col_types = F)
+    return(.table)
+  })
+
+file_path_names <- list(files)
+names(file_path_names) <- names(datas)
+
+
+```
+
+```{r, label='get meta params'}
+meta_df <- read_tsv(metadata, show_col_types = F)
+meta_df$recno %<>% as.character
+meta_df$runno %<>% as.character
+meta_df$searchno %<>% as.character
+```
+
+```{r, label = 'get meta data'}
+
+convert_tmt_label <- io_tools$convert_tmt_label
+
+# Examples of using the function
+# convert_tmt_label("126")  # Should return "TMT_126"
+# convert_tmt_label("TMT_126")  # Should return "TMT_126"
+# convert_tmt_label("TMT126")  # Should return "TMT_126"
+# convert_tmt_label("127N") # Should return "TMT_127_N"
+# convert_tmt_label("127_N") # Should return "TMT_127_N"
+# convert_tmt_label("127C") # Should return "TMT_127_C"
+# convert_tmt_label("131")  # Should return "TMT_131_N"
+
+meta_df %<>% dplyr::mutate(
+  label_full = convert_tmt_label(label)
+) %>% 
+  dplyr::mutate(
+    .orig_label = label,
+    label = label_full
+  )
+
+```
+
+
+## display
+```{r, label='meta table display'}
+meta_df %>% myreactable()
+```
+
+
+# normalize
+
+
+```{r}
+
+datas_long <- datas %>% purrr::map(~{
+  df <- .x
+  # common_cols <- intersect(colnames(geneinfo), colnames(df))  # Check against the first dataframe or ensure it's generalizable
+  df %>%
+    # pivot_longer(-c('fifteenmer', common_cols), names_to = 'label', values_to = 'value') %>% 
+    pivot_longer(starts_with("TMT_"), names_to = 'label', values_to = 'value') %>% 
+    group_by(label, taxon) %>% 
+    mutate(value_mednorm = value / median(value, na.rm = T)) %>% 
+    ungroup %>% 
+    mutate(value_norm_log = log2(value_mednorm))
+})
+
+# try to add recrunsearch
+# this could fail if parent directory of original file is not of form \d+_\d+_\d+
+datas_long %<>% purrr::imap(~{
+  df <- .x 
+  name <- .y
+  recrunsearch <- name %>% stringr::str_extract_all('(\\d+)_(\\d+)_(\\d+)')
+  recrunsearch %<>% stringr::str_split("_") %>% unlist
+  rec <- recrunsearch[[1]]
+  run <- recrunsearch[[2]]
+  search <- recrunsearch[[3]]
+  df %>% mutate(recno = rec, runno = run, searchno = search)
+})
+
+
+```
+
+```{r, fig.width=9}
+
+datas_long[[1]] %>% 
+  dplyr::filter(taxon != '') %>% 
+  ggplot(aes(x = label, y = value_norm_log, fill = taxon)) +
+  geom_violin() +
+  theme(axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+
+```
+
+
+
+
+
+## combine tables
+
+```{r}
+
+dfl <- bind_rows(datas_long, .id = '.id')
+dfl %<>% left_join(meta_df)
+
+```
+
+
+
+```{r}
+
+# dfl %>%  pivot_wider()
+
+```
+

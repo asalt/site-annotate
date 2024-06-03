@@ -1,4 +1,3 @@
----
 title: "site-annotate-notreduced"
 author: "MSPC"
 date: "`r Sys.Date()`"
@@ -11,6 +10,7 @@ output:
 params:
   data_dir: NULL
   metadata: NULL
+  modi_abbrev: p
 ---
 
 <style type="text/css">
@@ -59,9 +59,8 @@ myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T
 # load
 ```{r}
 (data_dir <- params$data_dir)
-(metadata <- params$metadata)
 data_dir <- "/media/alex/Expansion/MSPC001141/data/processed/phos/fragpipe_current"
-metadata <- "/media/alex/Expansion/MSPC001141/data/processed/phos/fragpipe_current/metadata.tsv"
+data_dir <- "/media/alex/Expansion/MSPC000668/data/processed/phos/fragpipe"
 
 if (is.null(data_dir)) {
   ( data_dir <- Sys.getenv("data_dir", unset = ".") )
@@ -76,7 +75,7 @@ print(data_dir)
 
 
 ```{r}
-(files <- fs::dir_ls(data_dir , regexp = ".*reduced.tsv$", fail = F, recurse = T))
+(files <- fs::dir_ls(data_dir , regexp = ".*notreduced.tsv$", fail = F, recurse = T))
 
 if (length(files) == 0) {
   cat("no files found")
@@ -289,6 +288,147 @@ datas_reduced[[1]] %>% head
 
 
 ```
+
+```{r, label='add sitename'}
+modi_abbrev <- params$modi_abbrev
+modi_abbrev <- 'p'
+# annotate with other info
+possible_id_cols <- c("ENSG", "ENST", "ENSP", "geneid", "symbol", "taxon", "fifteenmer", "position", "AA", "sitename")
+.metadatas <- datas %>% purrr::map(~{
+    common_cols <- intersect(colnames(.x), possible_id_cols)
+  res = .x %>%
+    distinct(!!!rlang::syms(common_cols)) %>% 
+    mutate(sitename = stringr::str_c(symbol, stringr::str_c(!!modi_abbrev, AA, position), sep='_'))
+})
+.metadata <- bind_rows(.metadatas) %>% distinct()
+
+.datas_reduced <- datas_reduced %>% purrr::map(~{
+   common_cols <- intersect(colnames(.x), possible_id_cols)
+  .x %>% left_join(.metadata) %>% dplyr::select(!!common_cols, everything())
+})
+
+datas_reduced <- .datas_reduced
+
+```
+
+## isoform reduction
+```{r, label='load package data'}
+
+package_data_dir <- file.path(here(), "/data")
+
+(package_files <- fs::dir_ls(package_data_dir , glob = "*selection.mapping.txt", fail = F, recurse = T))
+isoform_table <- package_files %>% purrr::map(~read_tsv(.x, show_col_types = F)) %>% bind_rows()
+
+```
+
+
+```{r}
+
+
+datas_reduced_withisoind <- datas_reduced %>%
+  purrr::map(~{
+    df <- .x
+    if ( !"ENSP" %in% names(df) ) {
+      return(df) # cannot do
+    }
+    res <- left_join(df, isoform_table, by = c('ENSP'='Protein_id', "ENSG"="Gene_id"))
+  })
+
+
+.df <- datas_reduced_withisoind [[1]]
+
+condense_group <- function(df) {
+    # Early exit if the data frame is empty
+  if (nrow(df) == 0) {
+    return(list(Protein_Accessions = NA,
+                AApos_List = NA,
+                Primary_select = NA,
+                Secondary_select = NA,
+                Unique_select = NA,
+                Best_select = NA,
+                Protein_Accession_Selected = NA,
+                Reason_Selected = NA))
+  }
+
+  # Handle NAs and create protein lists
+  df$ENSP <- ifelse(is.na(df$ENSP), "", df$ENSP)
+  proteins <- paste(df$ENSP, collapse="; ")
+  aapos_list <- paste(as.character(df$position), collapse="; ")
+
+  # Processing selections
+  primarysel <- if (any(df$primary_select == "Yes")) {
+    paste(df$ENSP[df$primary_select == "Yes"], collapse=", ")
+  } else {
+    NA
+  }
+
+  secondarysel <- if (any(df$secondary_select == "Yes")) {
+    paste(df$ENSP[df$secondary_select == "Yes"], collapse=", ")
+  } else {
+    NA
+  }
+
+  # Determine best and unique selections
+  uniquesel <- NA
+  bestsel <- NA
+  if (is.na(primarysel) && is.na(secondarysel)) {
+    if (length(unique(df$ENSP)) == 1) {
+      uniquesel <- proteins
+    } else if (length(unique(df$ENSP)) > 1) {
+      bestsel <- df[which.max(df$protein_length), "Protein"]
+    }
+  }
+
+  # Final selection logic
+  finalsel <- if (!is.na(primarysel)) {
+    primarysel
+  } else if (!is.na(secondarysel)) {
+    secondarysel
+  } else if (!is.na(uniquesel)) {
+    uniquesel
+  } else {
+    bestsel
+  }
+  reason <- if (!is.na(primarysel)) {
+    "primary"
+  } else if (!is.na(secondarysel)) {
+    "secondary"
+  } else if (!is.na(uniquesel)) {
+    "not primary or secondary, only one choice"
+  } else if (!is.na(bestsel)) {
+    "not primary or secondary, multiple choices, returning longest"
+  } else {
+    NA
+  }
+
+  # Create output
+  output <- list(
+    Protein_Accessions = proteins,
+    AApos_List = aapos_list,
+    Primary_select = ifelse(is.na(primarysel), "", primarysel),
+    Secondary_select = ifelse(is.na(secondarysel), "", secondarysel),
+    Unique_select = ifelse(is.na(uniquesel), "", uniquesel),
+    Best_select = ifelse(is.na(bestsel), "", bestsel),
+    Protein_Accession_Selected = finalsel,
+    Reason_Selected = reason
+  )
+    return(output)
+
+}
+
+# .res <- .df %>% 
+#   head(40) %>% 
+#   group_by(fifteenmer,
+#            geneid,
+#            ENSG
+#            ) %>% 
+#    summarise(data_summary = list(condense_group(cur_data())), .groups = 'drop')
+
+  
+
+```
+
+
 
 # export 
 ```{r, label='do export'}
