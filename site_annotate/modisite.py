@@ -8,14 +8,6 @@ from . import log
 logger = log.get_logger(__file__)
 
 
-def quant_protein(**kwargs):
-    pass
-
-
-def modisite_quant():
-    pass
-
-
 def extract_positions(sequence):
     # Remove parentheses and numbers to calculate positions
     cleaned_sequence = re.sub(r"\(\d\.\d+\)", "", sequence)
@@ -110,7 +102,7 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
 
         best_probability_col = col + "_best_localization"
 
-        maxprob = df_positions.groupby("spectrum", "peptide")[
+        maxprob = df_positions.groupby(["spectrum", "peptide"])[
             best_probability_col
         ].max()
         maxprob.name = "highest_prob"
@@ -121,8 +113,6 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
             (df_positions.prob > 0.5)
             | (df_positions.prob >= df_positions["highest_prob"])
         ]
-
-        # psms_positions.groupby("15mer").apply(quant_protein)
 
         RESULTS[col] = df_positions_filtered
 

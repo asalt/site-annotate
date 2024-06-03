@@ -184,7 +184,12 @@ def run(cores, psms, out, fasta, **kwargs):
                 executor.submit(process_frame, item, fa, modisite): item for item in g
             }
 
-            for future in tqdm(as_completed(futures), total=len(futures)):
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                mininterval=0.4,
+                smoothing=0.1,
+            ):
                 try:
                     result = future.result()
                     fullres.append(result)
