@@ -297,7 +297,6 @@ datas_reduced <- reduce_tools$reduce_sites(datas, geneinfo)
 
 ```{r, label='add sitename'}
 modi_abbrev <- params$modi_abbrev
-modi_abbrev <- 'ac'
 # annotate with other info
 possible_id_cols <- c("ENSG", "ENST", "ENSP", "geneid", "symbol", "taxon", "fifteenmer", "position", "AA", "sitename", "protein_length")
 .metadatas <- datas %>% purrr::map(~{
@@ -434,7 +433,7 @@ condense_group <- function(df) {
 # df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "AAAAAAsGVTTGKPP", geneid == "11129", ENSG == "ENSG00000104859")
 df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "AAAAAHsTPVRREVT", geneid == "23136", ENSG == "ENSG00000082397")
 df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "AESPETsAVESTQST", geneid == "100710" )
-.res <- datas_reduced_withisoind[[1]] %>%
+.res <- bind_rows(datas_reduced_withisoind) %>%
   group_by(fifteenmer,
            geneid,
            ENSG,

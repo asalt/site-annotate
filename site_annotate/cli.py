@@ -91,7 +91,7 @@ def common_options(f):
     default="site_annotate_post_not_reduced",
     show_default=True,
 )
-def report(template, data_dir, output_dir, metadata):
+def report(template, data_dir, output_dir, metadata, **kwargs):
     print(template)
     template_file = REPORT_TEMPLATES[template]
 
@@ -105,6 +105,8 @@ def report(template, data_dir, output_dir, metadata):
         # "output_dir": str(output_dir),
         "metadata": str(metadata),
     }
+    for k, v in kwargs.items():
+        params_dict[k] = v
     params = "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
 
     cmd = [
@@ -118,14 +120,54 @@ def report(template, data_dir, output_dir, metadata):
     ]
 
     logger.info(cmd)
-
     subprocess.run(cmd)
 
 
 @main.command()
 @common_options
-def reduce_sites(**kwargs):
-    report(template="site_annotate_post_reduced", **kwargs)
+@click.option(
+    "-o",
+    "--output-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    required=False,
+    default=None,
+    show_default=True,
+    help="Output directory, defaults to data_dir if not explicitly set",
+)
+@click.option(
+    "-d",
+    "--data-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    required=True,
+    default=pathlib.Path(".").absolute(),
+    show_default=True,
+)
+@click.option("--modi-abbrev", default="p", show_default=True)
+def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
+
+    template_file = REPORT_TEMPLATES["site_annotate_post_not_reduced"]
+
+    data_dir = pathlib.Path(data_dir).absolute()
+    if output_dir is None:
+        output_dir = data_dir
+
+    params_dict = {
+        "data_dir": str(data_dir),
+        "modi_abbrev": modi_abbrev,
+    }
+    params = "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
+    cmd = [
+        f"Rscript",
+        "-e",
+        f"""library(rmarkdown)
+        rmarkdown::render("{template_file}",
+        output_dir="{output_dir}",
+        params={params},
+        )""",
+    ]
+
+    logger.info(cmd)
+    subprocess.run(cmd)
 
 
 # import ipdb
