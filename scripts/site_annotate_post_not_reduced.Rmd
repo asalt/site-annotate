@@ -34,7 +34,7 @@ suppressPackageStartupMessages(library(reactable))
 library(knitr)
 suppressPackageStartupMessages(library(here))
 
-src_dir <- file.path(here())
+src_dir <- file.path(here("R"))
 io_tools <- new.env()
 source(file.path(src_dir, "./io.R"), local = io_tools)
 
@@ -63,9 +63,8 @@ myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T
 # load
 ```{r}
 (data_dir <- params$data_dir)
-data_dir <- "/media/alex/Expansion/MSPC001141/data/processed/acetyl/fragpipe/"
 
-if (is.null(data_dir)) {
+if (is.null(data_dir) | !fs::dir_exists(data_dir)) {
   ( data_dir <- Sys.getenv("data_dir", unset = ".") )
   if (is.null(data_dir)) {
     cat("data dir not set")
@@ -440,7 +439,7 @@ df <- datas_reduced_withisoind[[1]] %>% filter(fifteenmer == "AESPETsAVESTQST", 
            # position
            .add = TRUE
            ) %>%
-   summarise(data_summary = list(condense_group(cur_data())), .groups = 'drop') 
+   summarise(data_summary = list(condense_group(cur_data())), .groups = 'drop')
 isoform_selection <- .res %>% unnest_wider(data_summary)
 
 
@@ -457,7 +456,7 @@ datas_reduced %>% purrr::imap(~{
   dfm <- left_join(df, isoform_selection)
   orig_path <- file_path_names[[name]]
   rootdir <- fs::path_dir(orig_path)
-  
+
   newfile <- fs::path_join(c(rootdir, paste0(str_replace(.y, 'notreduced', "reduced"), ".tsv")))
   # print(orig_path)
   print(newfile)
