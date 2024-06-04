@@ -1,4 +1,7 @@
+requests
 click
 pandas
 pytest
 pytest-mock
+pyjanitor
+biopython
