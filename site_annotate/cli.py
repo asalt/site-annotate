@@ -23,12 +23,14 @@ def main():
 
 
 TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "scripts"  # 2 levels up
+
 if not TEMPLATE_PATH.exists():
     logger.error(f"Template path not found: {TEMPLATE_PATH}")
-    sys.exit(1)
+    raise
 REPORT_TEMPLATES = TEMPLATE_PATH.glob("*Rmd")
 REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
 # logger.info(REPORT_TEMPLATES)
+
 
 
 @main.command()
