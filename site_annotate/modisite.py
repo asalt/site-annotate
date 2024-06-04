@@ -3,6 +3,7 @@ import re
 import pandas as pd
 from collections import defaultdict
 
+from .constants import VALID_MODI_COLS
 from . import log
 
 logger = log.get_logger(__file__)
@@ -75,16 +76,16 @@ def quant_isobaric_site(psms_positions):
 def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
 
     sequence = seqinfo["sequence"]
-    VALID_COLS = [
-        "sty_79_9663",
-        "k_42_0106",
-        "k_43_0058",
-    ]
 
     RESULTS = dict()
     # breakpoint()
 
-    for col in VALID_COLS:
+    # VALID_MODI_COLS = [ # here as example, this is defined in constants.py
+    #     "sty_79_9663",
+    #     "k_42_0106",
+    #     "k_43_0058",
+    # ]
+    for col in VALID_MODI_COLS:
         if col not in df.columns:
             continue
         if len(df[~df[col].isna()]) == 0:

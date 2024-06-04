@@ -10,9 +10,13 @@ from tqdm import tqdm
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import janitor
+
 from . import log
 from . import io
 from . import modisite
+from .utils import data_generator
+from .constants import VALID_MODI_COLS
 
 logger = log.get_logger(__file__)
 
@@ -200,6 +204,10 @@ def run(cores, psms, output_dir, fasta, **kwargs):
     # TODO expand for all psms
     logger.info(f"loading {psms[0]}")
     df = io.read_psm_file(psms[0])
+    try:
+        io.validate_psm_file(df)
+    except Exception as e:
+        raise e
 
     logger.info(f"loading {fasta}")
     fa = io.read_fasta(fasta)
@@ -248,16 +256,10 @@ def run(cores, psms, output_dir, fasta, **kwargs):
                     # print(f"An error occurred: {e}")
                     pass
 
-    VALID_COLS = [
-        "sty_79_9663",
-        "k_42_0106",
-        "k_43_0058",
-    ]
-
     fullres = list(filter(None, fullres))
 
     finalres = dict()
-    for col in VALID_COLS:
+    for col in VALID_MODI_COLS: # of form ["sty_79_9663", "k_42_0106", ...]
         frames = list()
         for items in fullres:
             vals = items.get(col)
