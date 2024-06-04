@@ -10,7 +10,7 @@ from pytest_mock import MockerFixture
 
 
 def test_read_psm_file():
-    psm_file = Path(__file__).parent / "testdata/psm.tsv"
+    psm_file = Path(__file__).parent.parent / "testdata/psm.tsv"
     print(os.path.abspath(psm_file))
     df = site_annotate.io.read_psm_file(psm_file)
 
@@ -74,7 +74,7 @@ def test_read_fasta(mock_fasta_file, mocker: MockerFixture):
 
 
 def test_read_fasta_testdata():
-    fasta_file = Path(__file__).parent / "testdata/test.fa"
+    fasta_file = Path(__file__).parent.parent / "testdata/test.fa"
     if not fasta_file.exists():
         pytest.skip("Test data not found")
     df = site_annotate.io.read_fasta(fasta_file)

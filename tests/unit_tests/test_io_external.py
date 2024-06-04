@@ -18,7 +18,7 @@ def test_get_data_dir():
     res = site_annotate.io_external.set_data_dir()
     res = Path(res)
 
-    assert res.resolve() == Path("../data/").resolve()
+    assert res.resolve() == Path("../../data/").resolve()
 
 
 def test_check_files_exists():

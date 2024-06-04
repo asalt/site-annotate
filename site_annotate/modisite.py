@@ -47,6 +47,7 @@ def reset_inner_index(res_df):
 def create_15mer(sequence, position):
     sequence_padded = "_" * 7 + sequence + "_" * 7
     position_padded = position + 7
+    position_padded = int(position_padded) # attempt to have this guaranteed beforehand
     res = sequence_padded[position_padded - 7 : position_padded + 7 + 1]
     reslist = list(res)
     reslist[6] = reslist[6].lower()

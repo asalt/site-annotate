@@ -32,7 +32,6 @@ REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
 # logger.info(REPORT_TEMPLATES)
 
 
-
 @main.command()
 def show_templates():
     for k, v in REPORT_TEMPLATES.items():
@@ -73,7 +72,7 @@ def common_options(f):
 # )
 # @click.option(
 #     "-o",
-#     "--output-dir",
+#     "--
 #     type=click.Path(exists=True, file_okay=False, dir_okay=True),
 #     required=False,
 #     default=None,
@@ -180,11 +179,17 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
 @click.option(
     "-p", "--psms", type=click.Path(exists=True, dir_okay=False), multiple=True
 )
-@click.option("-o", "--out", default=None)
+@click.option(
+    "-o",
+    "--output-dir",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    show_default=True,
+)
 @click.option(
     "-f", "--fasta", type=click.Path(exists=True, dir_okay=False), help="fasta file"
 )
-def run(cores, psms, out, fasta, **kwargs):
+def run(cores, psms, output_dir, fasta, **kwargs):
 
     DECOY_FLAG = "rev_"
 

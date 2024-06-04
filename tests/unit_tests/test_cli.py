@@ -22,13 +22,12 @@ def test_greet():
         ],
     )
     assert result.exit_code == 0
-    # assert "Hello, world!" in result.output
 
 
 def test_missing_psms():
     runner = CliRunner()
     result = runner.invoke(
-        run, ["--cores", "2", "--out", "output.file", "--fasta", "file.fasta"]
+        run, ["--cores", "2", "--output-dir", ".", "--fasta", "file.fasta"]
     )
     assert result.exit_code != 0
     assert "Error" in result.output
