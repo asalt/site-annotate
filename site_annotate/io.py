@@ -119,5 +119,8 @@ def validate_psm_file(df):
         """
                          )
 
+    if 'position_start' not in df.columns:
+        raise ValueError(f"expected `position_start` in input file")
+
     return True
     # if 'peptide' not in 
