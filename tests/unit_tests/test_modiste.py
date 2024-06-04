@@ -2,6 +2,12 @@ import pandas as pd
 from site_annotate import modisite
 from pytest import approx
 
+def test_extract_positions_empty():
+    sequence = "XXXXX"
+    extracted_info = modisite.extract_positions(sequence)
+    assert isinstance(extracted_info, dict)
+    assert len(extracted_info) == 0
+
 
 def test_extract_positions():
     sequence = "DGS(0.0032)GGAS(0.0033)GT(0.0037)LQPS(0.1980)S(0.1980)GGGS(0.1980)S(0.1980)NS(0.1980)RER"
@@ -20,10 +26,29 @@ def test_extract_positions():
 
     assert extracted_info == expected_result
 
+def test_extract_positions_singleval():
+    sequence = "abcd(1)e"
+    extracted_info = modisite.extract_positions(sequence)
+    assert extracted_info == {
+            4: { "AA" : "d", "prob" : 1 }
+            }
+
+def test_extract_positions_misc():
+    sequence = "abcd(2.22.22)e"
+    extracted_info = modisite.extract_positions(sequence)
+    assert len(extracted_info) == 0
+
 
 def test_create_15mer():
     sequence = "SGGRRKSASATSSSS"
     position = 1
+    expected_result = "______sGGRRKSAS"
+    result = modisite.create_15mer(sequence, position)
+    assert result == expected_result
+
+def test_create_15mer_position_is_float():
+    sequence = "SGGRRKSASATSSSS"
+    position = 1.0 
     expected_result = "______sGGRRKSAS"
     result = modisite.create_15mer(sequence, position)
     assert result == expected_result

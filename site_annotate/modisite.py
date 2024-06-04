@@ -13,7 +13,7 @@ def extract_positions(sequence):
     # Remove parentheses and numbers to calculate positions
     cleaned_sequence = re.sub(r"\(\d\.\d+\)", "", sequence)
 
-    pattern = re.compile(r"(\w)\((\d\.\d+)\)")
+    pattern = re.compile(r"(\w)\((\d\.?\d*)\)")
     matches = pattern.finditer(sequence)
 
     result = {}
