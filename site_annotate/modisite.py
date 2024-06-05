@@ -110,10 +110,15 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
             df_positions["position_relative"] + df_positions["protein_start"] - 1
         )
         # here try phosphosite plus position map check
-        if "psp" in seqinfo:
+        if "psp" in seqinfo:  # this does
             psp_sequence = seqinfo["psp"]["sequence"]
-            psp_position_start = df_positions.peptide.apply(
-                lambda x: psp_sequence.find(x)
+            # this is a bit of a hack to ensure we don't match the first position of the protein
+            # if the original "position_start" is a second/repeated peptide occurance in the protein
+            psp_position_start = df_positions.apply(
+                lambda x: psp_sequence[int(max(x["protein_start"] - 4, 0))].find(
+                    x["peptide"]
+                ),
+                axis=1,
             )
             df_positions["psp_position_start"] = psp_position_start
             df_positions["position_absolut_psp"] = (
