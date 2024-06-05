@@ -29,12 +29,6 @@ def extract_positions(sequence):
     return result
 
 
-def position_dict_to_df(position_dict):
-    # Convert the dictionary to a DataFrame
-    df = pd.DataFrame(position_dict).T.reset_index(names=["position"])
-    return df
-
-
 def reset_inner_index(res_df):
     df_list = []
     for idx, df in res_df.items():
@@ -45,10 +39,16 @@ def reset_inner_index(res_df):
     return concatenated_df
 
 
+def position_dict_to_df(position_dict):
+    # Convert the dictionary to a DataFrame
+    df = pd.DataFrame(position_dict).T.reset_index(names=["position_relative"])
+    return df
+
+
 def create_15mer(sequence, position):
     sequence_padded = "_" * 7 + sequence + "_" * 7
     position_padded = position + 7
-    position_padded = int(position_padded) # attempt to have this guaranteed beforehand
+    position_padded = int(position_padded)  # attempt to have this guaranteed beforehand
     res = sequence_padded[position_padded - 7 : position_padded + 7 + 1]
     reslist = list(res)
     reslist[6] = reslist[6].lower()
@@ -74,6 +74,16 @@ def quant_isobaric_site(psms_positions):
 
 
 def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
+    """
+    seqinfo should/may have keys of:
+    - id
+    - description
+    - sequence
+    - geneid
+    - taxon
+    - symbol
+    - ENSP (only protein specific designator supported now)
+    """
 
     sequence = seqinfo["sequence"]
 
@@ -97,8 +107,20 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
 
         df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
         df_positions["position_absolut"] = (
-            df_positions["position"] + df_positions["protein_start"] - 1
+            df_positions["position_relative"] + df_positions["protein_start"] - 1
         )
+        # here try phosphosite plus position map check
+        if "psp" in seqinfo:
+            psp_sequence = seqinfo["psp"]["sequence"]
+            psp_position_start = df_positions.peptide.apply(
+                lambda x: psp_sequence.find(x)
+            )
+            df_positions["psp_position_start"] = psp_position_start
+            df_positions["position_absolut_psp"] = (
+                df_positions["position_relative"]
+                + df_positions["psp_position_start"]
+                - 1
+            )
 
         df_positions["fifteenmer"] = df_positions.apply(
             lambda x: create_15mer(sequence, x["position_absolut"]), axis=1

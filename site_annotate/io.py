@@ -10,7 +10,6 @@ from .utils import data_generator
 from .constants import VALID_MODI_COLS
 
 
-
 RENAME = {
     "sample_01": "TMT_126",
     "sample_02": "TMT_127_N",
@@ -104,6 +103,7 @@ def read_fasta(file_path):
 
     return df
 
+
 def validate_psm_file(df):
     exampledata = data_generator.generate_test_data(1)
     exampledata = janitor.clean_names(exampledata)
@@ -111,16 +111,19 @@ def validate_psm_file(df):
     setdiff = set(exampledata.columns) - set(df.columns)
 
     if "protein" in setdiff:
-        raise ValueError("`protein` not in psms file, this is used to assign isoform specific sites")
+        raise ValueError(
+            "`protein` not in psms file, this is used to assign isoform specific sites"
+        )
 
-    if len( set(df.columns) & set(VALID_MODI_COLS) ) == 0:
-        raise ValueError(f"""no modi column present
+    if len(set(df.columns) & set(VALID_MODI_COLS)) == 0:
+        raise ValueError(
+            f"""no modi column present
         should have a column of form {VALID_MODI_COLS[0]}
         """
-                         )
+        )
 
-    if 'position_start' not in df.columns:
-        raise ValueError(f"expected `position_start` in input file")
+    if "protein_start" not in df.columns:
+        raise ValueError(f"expected `protein_start` in input file")
 
     return True
-    # if 'peptide' not in 
+    # if 'peptide' not in

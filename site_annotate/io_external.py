@@ -1,11 +1,14 @@
 import os
+import re
 from pathlib import Path
 import requests
 import pandas as pd
 
+import pyfastx
 import janitor
 
 from . import log
+from .constants import PHOSPHOSITEPLUS_ANNOTATIONS
 
 logger = log.get_logger(__file__)
 
@@ -14,7 +17,7 @@ def set_data_dir():
     # Path of the current script
     current_script_path = Path(__file__).resolve()
     # Path to the top-level data directory
-    res = current_script_path.parent.parent / "data"
+    res = current_script_path.parent.parent / "data" / "phosphositeplus"
     logger.debug(f"data dir set to {res}")
     return res
 
@@ -53,16 +56,52 @@ def load_data(file_name, directory="data"):
         return None
 
 
-def get_psiteplus_file(file, **kwargs):
+def get_psiteplus_file(file_or_abbv, **kwargs):
 
     skiprows = 3
     if "skiprows" in kwargs:
-        skiprows = kwargs.pip("skiprows")
+        skiprows = kwargs.pop("skiprows")
+
+    if file_or_abbv in PHOSPHOSITEPLUS_ANNOTATIONS.keys():
+        file = PHOSPHOSITEPLUS_ANNOTATIONS[file_or_abbv]
+    elif file_or_abbv in PHOSPHOSITEPLUS_ANNOTATIONS.values():
+        file = file_or_abbv
+    else:
+        logger.warning(f"file {file_or_abbv} not found in set constants, may fail")
 
     fullfile = data_dir / file
+
     df = pd.read_table(fullfile, skiprows=skiprows, **kwargs)
     df = janitor.clean_names(df)
     return df
+
+    # import polars as pl
+
+    # pl.Config.set_tbl_cols(10000)
+    # psp = pl.read_csv(fullfile, separator="\t", skip_rows=3, infer_schema_length=10000)
+    # colnames_series = pd.Series(index=psp.columns)
+    # newnames = janitor.clean_names(colnames_series, axis="index")
+    # mapping = {k: v for k, v in zip(colnames_series.index, newnames.index)}
+    # psp = psp.rename(mapping)
+
+    # return psp
+
+
+def read_psite_fasta(file=None, skiprows=3) -> pyfastx.Fasta:
+    """
+    custom func to handle phosphositeplus fasta files whereby the first few rows need to be skipped
+    """
+
+    if file is None:
+        file = data_dir / "Phosphosite_seq.fasta"
+
+    import tempfile
+
+    falines = open(file, "rb").readlines()
+    with tempfile.NamedTemporaryFile(mode="w") as tmpfile:
+        tmpfile.writelines([x.decode() for x in falines[3:]])  # decode here not before
+        fa = pyfastx.Fasta(tmpfile.name, key_func=lambda x: x.split("|")[-1])
+    return fa
 
 
 # # Example Usage
@@ -73,3 +112,29 @@ def get_psiteplus_file(file, **kwargs):
 #         # Process data as needed
 # else:
 #     print("Please ensure all required files are in the data directory.")
+
+
+def maybe_add_uniprot(df):
+    if "uniprot_id" in df.columns:
+        return df
+    if "acc_id" in df.columns:
+        df = df.rename(columns={"acc_id": "uniprot_id"})
+        return df
+
+    proteins = df.protein.unique()
+
+    gid_pattern = re.compile(r"(?<=geneid\|)(.*?)(?=\|)")
+    ENSP_pattern = re.compile(r"(?<=ENSP\|)(.*?)(?=\|)")
+
+    proteins_ENSP = list()
+    for protein in proteins:
+        searchres = ENSP_pattern.search(protein)
+        if searchres is not None:
+            res = searchres.group(0)
+
+        proteins_ENSP.append(res)
+
+    # proteins = map(lambda x: x.split("|")[1], proteins)
+    from mygene import MyGeneInfo
+
+    mg = MyGeneInfo()

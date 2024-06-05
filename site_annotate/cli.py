@@ -14,9 +14,12 @@ import janitor
 
 from . import log
 from . import io
+from . import io_external
 from . import modisite
 from .utils import data_generator
 from .constants import VALID_MODI_COLS
+from .runner import run_pipeline
+from . import mapper
 
 logger = log.get_logger(__file__)
 
@@ -209,57 +212,74 @@ def run(cores, psms, output_dir, fasta, **kwargs):
     except Exception as e:
         raise e
 
-    logger.info(f"loading {fasta}")
-    fa = io.read_fasta(fasta)
+    df = mapper.add_uniprot(df)  #
 
-    g = df.groupby("protein")
+    logger.info(f"loading {fasta}")
+    # fa = io.read_fasta(fasta)
+    import pyfastx
+
+    fa = pyfastx.Fasta(fasta)
+    fa_psp_ref = io_external.read_psite_fasta()
+
+    # g2 = df2.groupby("protein")
+    # g3 = df3.group_by("protein")
 
     # breakpoint()
 
-    def process_frame(key_frame, fa, modisite):
-        key, frame = key_frame
-        # if 'Cont' not in key:
-        #     print()
-        #     import ipdb; ipdb.set_trace()
-        subfa = fa[(fa["id"] == key) & (~fa["id"].str.startswith(DECOY_FLAG))]
-        if len(subfa) == 0:
-            logger.info(f"skipping key {key}, db mismatch")
-            return
-        seqinfo = subfa.iloc[0].to_dict()
-        res = modisite.main(frame, seqinfo)
-        return res
+    # def process_frame(key_frame, fa, modisite):
+    #     key, frame = key_frame
+    #     # if 'Cont' not in key:
+    #     #     print()
+    #     #     import ipdb; ipdb.set_trace()
+    #     # subfa = fa[(fa["id"] == key) & (~fa["id"].str.startswith(DECOY_FLAG))]
+    #     try:
+    #         subfa = fa[key]
+    #     except KeyError:
+    #         logger.info(f"skipping key {key}, not found in fasta")
+    #         return
+    #     seqinfo = io.extract_info_from_header(subfa.name)
+    #     seqinfo["sequence"] = subfa.seq
+    #     if len(subfa) == 0:
+    #         logger.info(f"skipping key {key}, db mismatch")
+    #         return
+    #     # seqinfo = subfa.iloc[0].to_dict()
+    #     res = modisite.main(frame, seqinfo)
+    #     return res
 
-    fullres = list()
+    # fullres = list()
 
-    if cores == 1:
-        for item in tqdm(g):
-            res = process_frame(item, fa, modisite)
-            fullres.append(res)
+    # if cores == 1:
+    #     for item in tqdm(g):
+    #         res = process_frame(item, fa, modisite)
+    #         fullres.append(res)
 
-    if cores > 1:
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(process_frame, item, fa, modisite): item for item in g
-            }
+    # if cores > 1:
+    #     with ThreadPoolExecutor() as executor:
+    #         futures = {
+    #             executor.submit(process_frame, item, fa, modisite): item for item in g
+    #         }
 
-            for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                mininterval=0.4,
-                smoothing=0.1,
-            ):
-                try:
-                    result = future.result()
-                    fullres.append(result)
-                except Exception as e:
+    #         for future in tqdm(
+    #             as_completed(futures),
+    #             total=len(futures),
+    #             mininterval=0.4,
+    #             smoothing=0.1,
+    #         ):
+    #             try:
+    #                 result = future.result()
+    #                 fullres.append(result)
+    #             except Exception as e:
 
-                    # print(f"An error occurred: {e}")
-                    pass
+    #                 # print(f"An error occurred: {e}")
+    #                 pass
 
-    fullres = list(filter(None, fullres))
+    # g = df.groupby("protein")
+    # fullres = run_pipeline(g, fa, cores=cores)
+
+    fullres = run_pipeline(df, fa, fa_psp_ref=fa_psp_ref, cores=cores)
 
     finalres = dict()
-    for col in VALID_MODI_COLS: # of form ["sty_79_9663", "k_42_0106", ...]
+    for col in VALID_MODI_COLS:  # of form ["sty_79_9663", "k_42_0106", ...]
         frames = list()
         for items in fullres:
             vals = items.get(col)
