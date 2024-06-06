@@ -4,7 +4,7 @@ from pathlib import Path
 import requests
 import pandas as pd
 
-import pyfastx
+import pyfaidx
 import janitor
 
 from . import log
@@ -87,7 +87,7 @@ def get_psiteplus_file(file_or_abbv, **kwargs):
     # return psp
 
 
-def read_psite_fasta(file=None, skiprows=3) -> pyfastx.Fasta:
+def read_psite_fasta(file=None, skiprows=3) -> pyfaidx.Fasta:
     """
     custom func to handle phosphositeplus fasta files whereby the first few rows need to be skipped
     """

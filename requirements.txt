@@ -5,3 +5,7 @@ pytest
 pytest-mock
 pyjanitor
 biopython
+sqlitedict
+
+mygene
+pyfaidx
