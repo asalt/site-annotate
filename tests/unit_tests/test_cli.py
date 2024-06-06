@@ -21,7 +21,7 @@ def test_greet():
             # "file.fasta",
         ],
     )
-    assert result.exit_code == 0
+    assert result.exit_code == 0 and result.exception is None
 
 
 def test_missing_psms():

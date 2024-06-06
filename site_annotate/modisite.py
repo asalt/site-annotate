@@ -72,6 +72,14 @@ def quant_isobaric_site(psms_positions):
 
     return fullres
 
+def psp_assigner(x, psp_sequence):
+    # this is a bit of a hack to ensure we don't match the first position of the protein
+    # if the original "position_start" is a second/repeated peptide occurance in the protein
+    start = int(max(x["protein_start"] - 4, 0))
+    pos = psp_sequence[
+        int(max(x["protein_start"] - 4, 0))
+    ].find(x["peptide"]) + start
+    return pos
 
 def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
     """
@@ -112,12 +120,8 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
         # here try phosphosite plus position map check
         if "psp" in seqinfo:  # this does
             psp_sequence = seqinfo["psp"]["sequence"]
-            # this is a bit of a hack to ensure we don't match the first position of the protein
-            # if the original "position_start" is a second/repeated peptide occurance in the protein
             psp_position_start = df_positions.apply(
-                lambda x: psp_sequence[int(max(x["protein_start"] - 4, 0))].find(
-                    x["peptide"]
-                ),
+                lambda x: psp_assigner(x, psp_sequence),
                 axis=1,
             )
             df_positions["psp_position_start"] = psp_position_start

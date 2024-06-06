@@ -4,7 +4,7 @@ import logging
 from typing import Iterable, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pyfastx
+import pyfaidx
 from tqdm import tqdm
 
 from . import io
@@ -54,8 +54,8 @@ def process_frame(key_frame, fa, fa_psp_ref=None):
 def run_pipeline(
     # g: Iterable[Tuple[str, pd.DataFrame]],
     df: pd.DataFrame,
-    fa: pyfastx.Fasta,
-    fa_psp_ref: pyfastx.Fasta = None,
+    fa: pyfaidx.Fasta,
+    fa_psp_ref: pyfaidx.Fasta = None,
     cores=1,
 ) -> list:
 

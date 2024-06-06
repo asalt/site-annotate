@@ -1,4 +1,5 @@
 # tests/test_run.py
+import traceback
 import pytest
 from pathlib import Path
 from click.testing import CliRunner
@@ -32,4 +33,18 @@ def test_run():
     fa = test_files.get("fasta")
 
     runner = CliRunner()
-    result = runner.invoke(run, ["--cores", "2", "--psms", psms, "--fasta", fa])
+    result = runner.invoke(run, ["--cores", "2", "--psms", psms, "--fasta", fa,
+    "--no-uniprot-check"
+    ])
+
+    # assert result.exit_code == 0
+    # import pdb; pdb.set_trace()
+    try:
+        assert result.exit_code == 0
+        assert result.exception is None
+    except AssertionError as e:
+
+        tb = traceback.format_exception(*result.exc_info)
+        print(''.join(tb))
+        raise e
+

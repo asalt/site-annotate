@@ -10,6 +10,8 @@ from tqdm import tqdm
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import pyfaidx
+
 import janitor
 
 from . import log
@@ -193,10 +195,11 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
     default=None,
     show_default=True,
 )
+@click.option("--uniprot-check/--no-uniprot-check", default=True, show_default=True, is_flag=True)
 @click.option(
     "-f", "--fasta", type=click.Path(exists=True, dir_okay=False), help="fasta file"
 )
-def run(cores, psms, output_dir, fasta, **kwargs):
+def run(cores, psms, output_dir, uniprot_check, fasta, **kwargs):
 
     DECOY_FLAG = "rev_"
 
@@ -212,14 +215,18 @@ def run(cores, psms, output_dir, fasta, **kwargs):
     except Exception as e:
         raise e
 
-    df = mapper.add_uniprot(df)  #
+    if uniprot_check:
+        df = mapper.add_uniprot(df)  #
 
     logger.info(f"loading {fasta}")
     # fa = io.read_fasta(fasta)
-    import pyfastx
 
-    fa = pyfastx.Fasta(fasta)
-    fa_psp_ref = io_external.read_psite_fasta()
+    fa = pyfaidx.Fasta(fasta)
+    try:
+        fa_psp_ref = io_external.read_psite_fasta()
+    except FileNotFoundError:
+        logger.warning("phosphositeplus fasta not found")
+        fa_psp_ref = None
 
     # g2 = df2.groupby("protein")
     # g3 = df3.group_by("protein")
