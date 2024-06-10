@@ -100,7 +100,19 @@ def read_psite_fasta(file=None, skiprows=3) -> pyfaidx.Fasta:
     falines = open(file, "rb").readlines()
     with tempfile.NamedTemporaryFile(mode="w") as tmpfile:
         tmpfile.writelines([x.decode() for x in falines[3:]])  # decode here not before
-        fa = pyfastx.Fasta(tmpfile.name, key_func=lambda x: x.split("|")[-1])
+        tmpfile.seek(0)
+        keyfunc = lambda x: x.split("|")[
+            -1
+        ]  # cannot use this and retain distinct fasta headaer
+        # but there's only 1 case come across:
+        # (P62806)
+        # use this to chieck:
+        # awk -F'|' 'NR > 3 && /^>/ {print $NF}' "$fa" | sort | uniq -c | awk '$1 > 1'
+        # keyfunc = lambda x: x
+        fa = pyfaidx.Fasta(
+            tmpfile.name, duplicate_action="longest", key_function=keyfunc
+        )
+        # the whole point of this func is to provide fast acccess to uniprotid : sequence
     return fa
 
 

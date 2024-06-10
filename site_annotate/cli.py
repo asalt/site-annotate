@@ -238,26 +238,50 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
     save_results(finalres, psms[0])
 
 
+def load_psite_fasta():
+    try:
+        # Call the function that reads the FASTA file
+        fa_psp_ref = io_external.read_psite_fasta()
+        return fa_psp_ref
+    except FileNotFoundError:
+        logger.warning("PhosphositePlus fasta not found")
+        return None
+
+
 def load_and_validate_files(psm_path, fasta_path, uniprot_check):
-    logger.info(f"Loading {psm_path}")
-    df = io.read_psm_file(psm_path)
-    io.validate_psm_file(df)
+
+
+    # try load phosphositeplus fasta
+    # needs to be downloaded from https://www.phosphosite.org/staticDownloads manually (free non commercial)
+    # fa_psp_ref = load_psite_fasta()
+
+    # logger.info(f"Loading {psm_path}")
+    # df = io.read_psm_file(psm_path)
+
+    with ThreadPoolExecutor() as executor:  # there's some significant postprocessing these funcs do that makes this worth it
+        # Submit the function to the executor
+        psp_future = executor.submit(load_psite_fasta)
+        df_future = executor.submit(io.read_psm_file, psm_path)
+        fasta_future = executor.submit(Fasta, fasta_path)
+        #
+
+        fa_psp_ref = psp_future.result()
+
+        logger.info(f"Loading {psm_path}")
+        df = df_future.result()
+
+        logger.info(f"Loading {fasta_path}")
+        fasta_data = fasta_future.result()
+        # fasta_data = Fasta(fasta_path)
+
+    if fa_psp_ref:
+        logger.info("FASTA data loaded successfully.")
+    else:
+        logger.info("Failed to load FASTA data.")
 
     if uniprot_check:
         df = mapper.add_uniprot(df)
 
-    logger.info(f"Loading {fasta_path}")
-    fasta_data = Fasta(fasta_path)
-
-    # try load phosphositeplus fasta
-    # needs to be downloaded from https://www.phosphosite.org/staticDownloads manually (free non commercial)
-    try:
-        # fasta_data.psp_ref = io_external.read_psite_fasta() ##??
-        fa_psp_ref = io_external.read_psite_fasta()  ##??
-    except FileNotFoundError:
-        logger.warning("PhosphositePlus fasta not found")
-        # fasta_data.psp_ref = None # ??
-        fa_psp_ref = None
     return df, fasta_data, fa_psp_ref  #
 
 

@@ -51,6 +51,7 @@ def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:
     df = pd.read_csv(psm_file, sep="\t")
     df = janitor.clean_names(df)
     df = prepare_psm_file(df)
+    validate_psm_file(df)
     # breakpoint()
     return df
 
