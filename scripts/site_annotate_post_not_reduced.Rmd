@@ -322,6 +322,12 @@ datas_reduced <- reduce_tools$reduce_sites(datas, geneinfo)
 ```{r, label='add sitename'}
 modi_abbrev <- params$modi_abbrev
 # annotate with other info
+position_column <- case_when(
+  "position_absolute_psp" %in% colnames(datas_reduced[[1]]) ~ "position_absolute_psp",
+  "position_absolute" %in% colnames(datas_reduced[[1]]) ~ "position_absolute",
+  TRUE ~ "position"
+)
+
 possible_id_cols <- c("ENSG", "ENST", "ENSP", "geneid", "symbol", "taxon", "fifteenmer", "position_absolut", "AA", "sitename", "protein_length")
 .metadatas <- datas %>% purrr::map(~ {
   common_cols <- intersect(colnames(.x), possible_id_cols)
@@ -340,6 +346,42 @@ possible_id_cols <- c("ENSG", "ENST", "ENSP", "geneid", "symbol", "taxon", "fift
 
 .datas_reduced %<>% purrr::map(~ .x %>% rename(c("position" = "position_absolut")))
 datas_reduced <- .datas_reduced
+
+column_names <- c(
+  "position",
+  "sitename",
+  "fifteenmer",
+  "ENSG",
+  "ENSP",
+  "ENST",
+  "geneid",
+  "symbol",
+  "taxon",
+  "protein",
+  "AA",
+  "protein_length",
+  "TMT_126_intensity",
+  "TMT_127_N_intensity",
+  "TMT_127_C_intensity",
+  "TMT_128_N_intensity",
+  "TMT_128_C_intensity",
+  "TMT_129_N_intensity",
+  "TMT_129_C_intensity",
+  "TMT_130_N_intensity",
+  "TMT_130_C_intensity",
+  "TMT_131_N_intensity",
+  "TMT_131_C_intensity",
+  "TMT_132_N_intensity",
+  "TMT_132_C_intensity",
+  "TMT_133_N_intensity",
+  "TMT_133_C_intensity",
+  "TMT_134_N_intensity"
+)
+datas_reduced %<>%
+  purrr::map(~ {
+    .x %>%
+      dplyr::select(all_of(column_names))
+  })
 ```
 
 
@@ -348,11 +390,35 @@ datas_reduced <- .datas_reduced
 #   select(position, position_absolut)
 #
 # .metadata %>% dplyr::filter(symbol == "H2BC21") %>% arrange(position_absolut)
-datas_reduced[[1]] %>%
-  dplyr::filter(symbol == "H2BC21") %>%
-  select(sitename, fifteenmer, geneid, symbol, taxon, position, everything()) %>%
-  arrange(position)
+
+# datas_reduced[[1]] %>%
+#   dplyr::filter(symbol == "H2BC21") %>%
+#   select(sitename, fifteenmer, geneid, symbol, taxon, position, everything()) %>%
+#   arrange(position)
 ```
+
+# export
+```{r, label='do export'}
+datas_reduced %>% purrr::imap(~ {
+  df <- .x
+  name <- .y
+  # dfm <- left_join(df, isoform_selection)
+  dfm <- df
+  orig_path <- file_path_names[[name]]
+  rootdir <- fs::path_dir(orig_path)
+
+  newfile <- fs::path_join(c(rootdir, paste0(str_replace(.y, "notreduced", "reduced"), ".tsv")))
+  # print(orig_path)
+  print(newfile)
+  ._ <- readr::write_tsv(dfm, newfile)
+})
+```
+
+
+
+
+```
+
 
 ## isoform reduction
 ```{r, label='load package data'}
@@ -362,21 +428,28 @@ package_data_dir <- file.path(here(), "/data")
 isoform_table <- package_files %>%
   purrr::map(~ read_tsv(.x, show_col_types = F)) %>%
   bind_rows()
+
+
+# Check if the isoform_table is not empty
+if (length(isoform_table) != 0) {
+  datas_reduced_withisoind <- purrr::map(datas_reduced, function(df) {
+    # Check if 'ENSP' is one of the column names
+    if ("ENSP" %in% names(df)) {
+      # Perform left join if 'ENSP' column exists
+      df <- dplyr::left_join(df, isoform_table, by = c("ENSP" = "Protein_id", "ENSG" = "Gene_id"))
+    }
+    # Return the modified or unmodified dataframe
+    df
+  })
+} else {
+  # If isoform_table is empty, just return the original list unmodified
+  # datas_reduced_withisoind <- datas_reduced
+  knitr::knit_exit("isoform_table is empty, skipping isoform reduction")
+}
 ```
 
 
-```{r}
-datas_reduced_withisoind <- datas_reduced %>%
-  purrr::map(~ {
-    df <- .x
-    if (!"ENSP" %in% names(df)) {
-      return(df) # cannot do
-    }
-    res <- left_join(df, isoform_table, by = c("ENSP" = "Protein_id", "ENSG" = "Gene_id"))
-  })
-
-
-
+```{r, label='isoform reduction'}
 
 condense_group <- function(df) {
   # Early exit if the data frame is empty
@@ -479,24 +552,6 @@ condense_group <- function(df) {
   ) %>%
   summarise(data_summary = list(condense_group(cur_data())), .groups = "drop")
 isoform_selection <- .res %>% unnest_wider(data_summary)
-```
-
-
-
-# export
-```{r, label='do export'}
-datas_reduced %>% purrr::imap(~ {
-  df <- .x
-  name <- .y
-  dfm <- left_join(df, isoform_selection)
-  orig_path <- file_path_names[[name]]
-  rootdir <- fs::path_dir(orig_path)
-
-  newfile <- fs::path_join(c(rootdir, paste0(str_replace(.y, "notreduced", "reduced"), ".tsv")))
-  # print(orig_path)
-  print(newfile)
-  ._ <- readr::write_tsv(dfm, newfile)
-})
 ```
 
 
