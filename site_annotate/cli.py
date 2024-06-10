@@ -258,7 +258,10 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     # logger.info(f"Loading {psm_path}")
     # df = io.read_psm_file(psm_path)
 
-    with ThreadPoolExecutor() as executor:  # there's some significant postprocessing these funcs do that makes this worth it
+    # fasta_data = Fasta(fasta_path)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:  # there's some significant postprocessing these funcs do that makes this worth it, I think
+        # need to time test this with larger files
         # Submit the function to the executor
         psp_future = executor.submit(load_psite_fasta)
         df_future = executor.submit(io.read_psm_file, psm_path)
@@ -272,7 +275,6 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
 
         logger.info(f"Loading {fasta_path}")
         fasta_data = fasta_future.result()
-        # fasta_data = Fasta(fasta_path)
 
     if fa_psp_ref:
         logger.info("FASTA data loaded successfully.")
