@@ -23,6 +23,7 @@ from .utils import data_generator
 from .constants import VALID_MODI_COLS
 from .runner import run_pipeline
 from . import mapper
+from . import reduce
 
 logger = log.get_logger(__file__)
 
@@ -240,6 +241,9 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
     # and values the concatenated dataframe of all sites, along with tmt quant if applicable
     save_results(finalres, psms[0])
 
+    site_reduced = reduce.reduce_sites(finalres)
+    save_results(site_reduced, psms[0], name="site_annotation_reduced")
+
 
 def load_psite_fasta():
     try:
@@ -303,9 +307,10 @@ def process_results(fullres):
     return finalres
 
 
-def save_results(finalres, input_path):
-    infile = pathlib.Path(input_path)
+def save_results(finalres, input_file, name="site_annotation_notreduced"):
+    infile = pathlib.Path(input_file)
     for key, val in finalres.items():
-        outfile = infile.parent / f"{key}_site_annotation_notreduced.tsv"
+        # outfile = infile.parent / f"{key}_site_annotation_notreduced.tsv"
+        outfile = infile.parent / f"{key}_{name}.tsv"
         logger.info(f"Writing {outfile}")
         val.to_csv(outfile, sep="\t", index=False)
