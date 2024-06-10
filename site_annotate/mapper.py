@@ -8,6 +8,8 @@ from mygene import MyGeneInfo
 import json
 import sqlitedict
 
+from site_annotate import io_external
+
 
 from . import log
 
@@ -111,6 +113,31 @@ def add_uniprot(df):
         final_items.update({item["query"]: item for item in online_info})
 
     return map_proteins_to_uniprot(df, final_items)
+
+
+def add_annotations(data):
+    outdata = {}
+    for k, df in data.items():
+        # data[k] = add_uniprot(df)
+        psp_info = io_external.get_psiteplus_file(k)
+        if psp_info is None:
+            logger.warning(f"no info for {k}")
+            continue
+        import ipdb
+
+        ipdb.set_trace()
+        df["_upper"] = df["fifteenmer"].str.upper()
+        psp_info["_upper"] = psp_info["site_+_7_aa"].str.upper()
+
+        dfm = df.merge(
+            psp_info,
+            left_on=["uniprot_id", "_upper"],
+            right_on=["acc_id", "_upper"],
+            how="left",
+        )
+        outdata[k] = dfm
+
+    return outdata
 
 
 def _xxadd_uniprot(df):

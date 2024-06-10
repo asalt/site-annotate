@@ -242,6 +242,10 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
     save_results(finalres, psms[0])
 
     site_reduced = reduce.reduce_sites(finalres)
+    import ipdb
+
+    ipdb.set_trace()
+    site_reduced = mapper.add_annotations(site_reduced)
     save_results(site_reduced, psms[0], name="site_annotation_reduced")
 
 

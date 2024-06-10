@@ -32,7 +32,7 @@ def _reduce_sites(df):
         {
             "hyperscore": "max",
             "rtscore": "max",
-            "delta_mass": "max",
+            "delta_mass": "min",
             "highest_prob": "max",
         }
     ).rename(
@@ -61,7 +61,18 @@ def _reduce_sites(df):
 
     result = result.reset_index()
 
-    _meta = df.drop_duplicates(subset=groupby_cols)[groupby_cols]
+    _meta = df.drop_duplicates(subset=groupby_cols)[
+        groupby_cols
+        + [
+            "protein_start",
+            "protein_end",
+            "protein_start_psp",
+            "position_relative",
+            "position_absolut",
+            "position_absolut_psp",
+            "AA",
+        ]
+    ]
 
     result_merged = _meta.merge(result, on=groupby_cols, how="outer")
     # result_merged2 = result_merged.merge(result2, on=groupby_cols, how='outer')
