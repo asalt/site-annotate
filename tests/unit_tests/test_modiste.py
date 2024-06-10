@@ -1,6 +1,8 @@
 import pandas as pd
 from site_annotate import modisite
+from site_annotate.modisite import reset_inner_index
 from pytest import approx
+
 
 def test_extract_positions_empty():
     sequence = "XXXXX"
@@ -26,12 +28,12 @@ def test_extract_positions():
 
     assert extracted_info == expected_result
 
+
 def test_extract_positions_singleval():
     sequence = "abcd(1)e"
     extracted_info = modisite.extract_positions(sequence)
-    assert extracted_info == {
-            4: { "AA" : "d", "prob" : 1 }
-            }
+    assert extracted_info == {4: {"AA": "d", "prob": 1}}
+
 
 def test_extract_positions_misc():
     sequence = "abcd(2.22.22)e"
@@ -46,12 +48,121 @@ def test_create_15mer():
     result = modisite.create_15mer(sequence, position)
     assert result == expected_result
 
+
 def test_create_15mer_position_is_float():
     sequence = "SGGRRKSASATSSSS"
-    position = 1.0 
+    position = 1.0
     expected_result = "______sGGRRKSAS"
     result = modisite.create_15mer(sequence, position)
     assert result == expected_result
+
+
+def test_flow():
+    list_data = [
+        "S(0.7959)T(0.1760)EDLS(0.0282)PQR",
+        "S(0.8889)T(0.0618)EDLS(0.0493)PQR",
+        "S(0.0416)ES(0.8863)AENHS(0.0405)Y(0.0316)AK",
+        "S(0.0412)ES(0.9210)AENHS(0.0195)Y(0.0183)AK",
+        "QS(0.1981)S(0.1981)VS(0.1981)S(0.1981)T(0.1981)AS(0.0057)VNLGDPT(0.0037)R",
+        "AY(0.0958)S(0.8444)IDGPNT(0.0206)S(0.0206)RPQS(0.0187)AR",
+        "AY(0.0508)S(0.8956)IDGPNT(0.0138)S(0.0138)RPQS(0.0132)ARPS(0.0129)INEIPER",
+        "AY(0.0252)S(0.9106)IDGPNT(0.0167)S(0.0167)RPQS(0.0158)ARPS(0.0149)INEIPER",
+        "AS(0.0084)S(0.0084)S(0.0085)ADVGIS(0.4675)KS(0.4675)T(0.0312)EDLS(0.0085)PQR",
+        "AS(0.0071)S(0.0074)S(0.0074)ADVGIS(0.3237)KS(0.3237)T(0.3237)EDLS(0.0072)PQR",
+        "AS(0.0085)S(0.0087)S(0.0087)ADVGIS(0.4691)KS(0.4691)T(0.0272)EDLS(0.0086)PQR",
+        "S(0.0203)HS(0.6993)IT(0.2562)NMET(0.0243)GGLK",
+        "S(0.0208)HS(0.8978)IT(0.0507)NMET(0.0307)GGLK",
+        "S(0.4561)ES(0.4561)AENHS(0.0537)Y(0.0340)AK",
+        "S(0.4731)ES(0.4731)AENHS(0.0328)Y(0.0210)AK",
+    ]
+    data = pd.Series(list_data)
+    res = data.apply(modisite.extract_positions)
+    assert len(res) == len(list_data) == len(data)
+
+    assert res.apply(lambda x: isinstance(x, dict)).all()
+
+    res_series_of_dfs = res.apply(modisite.position_dict_to_df)
+    assert isinstance(res_series_of_dfs, pd.Series)
+
+    assert res_series_of_dfs.apply(lambda x: isinstance(x, pd.DataFrame)).all()
+
+    res_df = modisite.reset_inner_index(res_series_of_dfs)
+
+    assert isinstance(res_df, pd.DataFrame)
+
+    assert "original_index" in res_df.columns
+
+
+def test_reset_inner_index():
+    data = {
+        1: pd.DataFrame({"a": [1, 2, 3]}),
+        2: pd.DataFrame({"b": [4, 5, 6]}),
+    }
+    result = modisite.reset_inner_index(data)
+    assert "original_index" in result.columns
+    assert result["original_index"].nunique() == 2
+
+
+#
+def test_reset_inner_index_basic():
+    # Creating a sample series of dataframes
+    dfs = {
+        19: pd.DataFrame(
+            {
+                "position_relative": [1, 2, 6],
+                "AA": ["S", "T", "S"],
+                "prob": [0.7959, 0.176, 0.0282],
+            }
+        ),
+        20: pd.DataFrame(
+            {"position_relative": [1, 2], "AA": ["S", "T"], "prob": [0.8889, 0.0618]}
+        ),
+    }
+
+    # Expected DataFrame
+    expected_df = pd.DataFrame(
+        {
+            "position_relative": [1, 2, 6, 1, 2],
+            "AA": ["S", "T", "S", "S", "T"],
+            "prob": [0.7959, 0.176, 0.0282, 0.8889, 0.0618],
+            "original_index": [19, 19, 19, 20, 20],
+        }
+    )
+
+    # Test the function
+    result_df = reset_inner_index(dfs)
+    pd.testing.assert_frame_equal(result_df, expected_df)
+
+
+def test_reset_inner_index_empty():
+    # Test with empty dict
+    result_df = reset_inner_index(pd.Series())
+    expected_df = pd.DataFrame()
+    pd.testing.assert_frame_equal(result_df, expected_df)
+
+
+def test_reset_inner_index_single():
+    # Test with a single DataFrame
+    dfs = {
+        21: pd.DataFrame(
+            {
+                "position_relative": [1, 2, 6],
+                "AA": ["S", "T", "S"],
+                "prob": [0.7959, 0.176, 0.0282],
+            }
+        )
+    }
+    expected_df = pd.DataFrame(
+        {
+            "position_relative": [1, 2, 6],
+            "AA": ["S", "T", "S"],
+            "prob": [0.7959, 0.176, 0.0282],
+            "original_index": [21, 21, 21],
+        }
+    )
+
+    result_df = reset_inner_index(dfs)
+    pd.testing.assert_frame_equal(result_df, expected_df)
 
 
 def test_quant_isobaric_site():
@@ -104,3 +215,54 @@ def test_quant_isobaric_site():
     # Check that the sum of TMT columns is correct
     expected_sum = sum(data[col][0] for col in data if col.startswith("TMT_"))
     result_df["tmt_sum"].iloc[0] == approx(expected_sum, rel=1e-9)
+
+
+def xx_test_main_basic():
+    from unittest.mock import patch
+
+    df = pd.DataFrame(
+        {
+            "sty_79_9663": [0.1, None, 0.3],
+            "k_42_0106": [None, 0.2, 0.3],
+            # other columns as needed...
+        }
+    )
+    seqinfo = {
+        "sequence": "MKLVT",
+        "psp": {"sequence": "MKLVT"},
+        "id": "protein1",
+        "description": "example protein",
+        "geneid": "gene123",
+        "taxon": "9606",
+        "symbol": "PR1",
+        "ENSP": "ENSP00000369497",
+    }
+
+    # Mock the external functions called within `main`
+    with patch("modisite.extract_positions") as mock_extract:
+        with patch("modisite.position_dict_to_df") as mock_pos2df:
+            with patch("modisite.reset_inner_index") as mock_reset:
+                with patch("modisite.quant_isobaric_site") as mock_quant:
+                    # Setup the mock returns
+                    mock_extract.return_value = pd.Series([{"pos": 1}, {"pos": 2}])
+                    mock_pos2df.return_value = pd.DataFrame(
+                        {"position_relative": [1, 2], "original_index": [0, 0]}
+                    )
+                    mock_reset.return_value = pd.DataFrame(
+                        {
+                            "position_relative": [1, 2],
+                            "original_index": [0, 0],
+                            "prob": [0.7, 0.8],
+                        }
+                    )
+                    mock_quant.return_value = pd.DataFrame(
+                        {
+                            "position_relative": [1, 2],
+                            "original_index": [0, 0],
+                            "prob": [0.7, 0.8],
+                        }
+                    )
+
+                    # Run test
+                    results = modisite.main(df, seqinfo)
+                    # Add  assertions here to verify correct results

@@ -29,17 +29,62 @@ def extract_positions(sequence):
     return result
 
 
-def reset_inner_index(res_df):
+def reset_inner_index(res_series_of_dfs: pd.Series) -> pd.DataFrame:
+    """
+    Concatenates a series or dictionary of DataFrames into a single DataFrame, while adding an 'original_index' column to track the original index or key of each DataFrame in the input series or dictionary.
+
+    This function resets the index of each DataFrame, drops the existing index, and appends the original index or key as a new column called 'original_index'. If the input series or dictionary is empty, the function returns an empty DataFrame.
+
+    Parameters:
+    res_series_of_dfs (pd.Series or dict): A Series or dictionary where each element is a DataFrame. The keys or indices of this series or dictionary are used to populate the 'original_index' column in the resulting DataFrame.
+
+    Returns:
+    pd.DataFrame: A concatenated DataFrame with the original indices or keys stored in the 'original_index' column. If the input is empty, returns an empty DataFrame.
+
+    Examples:
+    >>> df1 = pd.DataFrame({'A': [1, 2]})
+    >>> df2 = pd.DataFrame({'A': [3, 4]})
+    >>> series_of_dfs = pd.Series({0: df1, 1: df2})
+    >>> reset_inner_index(series_of_dfs)
+       A  original_index
+    0  1               0
+    1  2               0
+    2  3               1
+    3  4               1
+
+    # res_series_of_dfs can be a simple dict of dataframes as well
+
+
+
+    """
     df_list = []
-    for idx, df in res_df.items():
+    for idx, df in res_series_of_dfs.items():
         df_reset = df.reset_index(drop=True)
         df_reset["original_index"] = idx
         df_list.append(df_reset)
+    if len(df_list) == 0:
+        return pd.DataFrame()
     concatenated_df = pd.concat(df_list, ignore_index=True)
     return concatenated_df
 
 
 def position_dict_to_df(position_dict):
+    """
+    Converts a dictionary where the keys represent positions and the values represent attributes associated with those positions, into a pandas DataFrame. The keys become a column in the DataFrame named 'position_relative'. The values, which should themselves be dictionary-like, are expanded into additional columns.
+
+    Parameters:
+    position_dict (dict): A dictionary where the keys are positions (typically integers or strings that can be interpreted as such) and the values are dictionaries containing data associated with these positions.
+
+    Returns:
+    pd.DataFrame: A DataFrame where each row corresponds to one key-value pair from the input dictionary. The 'position_relative' column represents the keys from the original dictionary.
+
+    Examples:
+    >>> position_dict = {1: {'AA': 'S', 'prob': 0.95}, 2: {'AA': 'T', 'prob': 0.85}}
+    >>> position_dict_to_df(position_dict)
+       position_relative AA   prob
+    0                  1  S  0.95
+    1                  2  T  0.85
+    """
     # Convert the dictionary to a DataFrame
     df = pd.DataFrame(position_dict).T.reset_index(names=["position_relative"])
     return df
@@ -72,14 +117,14 @@ def quant_isobaric_site(psms_positions):
 
     return fullres
 
+
 def psp_assigner(x, psp_sequence):
     # this is a bit of a hack to ensure we don't match the first position of the protein
     # if the original "position_start" is a second/repeated peptide occurance in the protein
     start = int(max(x["protein_start"] - 4, 0))
-    pos = psp_sequence[
-        int(max(x["protein_start"] - 4, 0))
-    ].find(x["peptide"]) + start
+    pos = psp_sequence[int(max(x["protein_start"] - 4, 0))].find(x["peptide"]) + start
     return pos
+
 
 def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
     """
@@ -109,9 +154,12 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
         if len(df[~df[col].isna()]) == 0:
             continue
 
-        res = df[~df[col].isna()][col].apply(extract_positions)
-        res_df = res.apply(position_dict_to_df)
-        res_df = reset_inner_index(res_df)
+        # at the moment, test_runner.test_flow tests the following routine
+        _data = df[~df[col].isna()][col]
+        res = _data.apply(extract_positions)  # res is a pd.Series
+        res_series_of_dfs = res.apply(position_dict_to_df)
+        res_df = reset_inner_index(res_series_of_dfs)
+        #
 
         df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
         df_positions["position_absolut"] = (
