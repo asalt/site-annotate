@@ -11,6 +11,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pyfaidx
+from pyfaidx import Fasta
 
 import janitor
 
@@ -33,12 +34,19 @@ def main():
 
 TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "scripts"  # 2 levels up
 
-if not TEMPLATE_PATH.exists():
-    logger.error(f"Template path not found: {TEMPLATE_PATH}")
-    raise
-REPORT_TEMPLATES = TEMPLATE_PATH.glob("*Rmd")
-REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
-# logger.info(REPORT_TEMPLATES)
+
+def get_templates(TEMPLATE_PATH):
+
+    if not TEMPLATE_PATH.exists():
+        logger.error(f"Template path not found: {TEMPLATE_PATH}")
+        raise
+    REPORT_TEMPLATES = TEMPLATE_PATH.glob("*Rmd")
+    REPORT_TEMPLATES = {x.stem: x for x in REPORT_TEMPLATES}
+    # logger.info(REPORT_TEMPLATES)
+    return REPORT_TEMPLATES
+
+
+REPORT_TEMPLATES = get_templates(TEMPLATE_PATH)
 
 
 @main.command()
@@ -179,10 +187,6 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
     subprocess.run(cmd)
 
 
-# import ipdb
-# ipdb.set_trace()
-
-
 @main.command()
 @click.option("--cores", default=1, show_default=True)
 @click.option(
@@ -195,155 +199,83 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
     default=None,
     show_default=True,
 )
-@click.option("--uniprot-check/--no-uniprot-check", default=True, show_default=True, is_flag=True)
+@click.option(
+    "--uniprot-check/--no-uniprot-check", default=False, show_default=True, is_flag=True
+)
 @click.option(
     "-f", "--fasta", type=click.Path(exists=True, dir_okay=False), help="fasta file"
 )
-def run(cores, psms, output_dir, uniprot_check, fasta, **kwargs):
-
-    DECOY_FLAG = "rev_"
-
-    if len(psms) == 0:
-        logging.warning("Warning: No PSM files provided")
+def run(cores, psms, output_dir, uniprot_check, fasta):
+    if not psms:
+        logger.warning("Warning: No PSM files provided.")
         return
 
-    # TODO expand for all psms
-    logger.info(f"loading {psms[0]}")
-    df = io.read_psm_file(psms[0])
-    try:
-        io.validate_psm_file(df)
-    except Exception as e:
-        raise e
+    df, fasta_data, fa_psp_ref = load_and_validate_files(psms[0], fasta, uniprot_check)
+    fullres = run_pipeline(df, fasta_data, cores)
+    # type fullres is list of dicts
+    # fullres[0].keys()
+    # dict_keys(['sty_79_9663'])
+    # fullres[0]['sty_79_9663'].columns
+    # Index(['position_relative', 'AA', 'prob', 'original_index', 'spectrum', 'spectrum_file', 'peptide', 'modified_peptide',
+    #     'extended_peptide', 'prev_aa', 'next_aa', 'peptide_length', 'charge', 'retention', 'observed_mass', 'calibrated_observed_mass',
+    #     'observed_m_z', 'calibrated_observed_m_z', 'calculated_peptide_mass', 'calculated_m_z', 'delta_mass', 'spectralsim', 'rtscore',
+    #     'expectation', 'hyperscore', 'nextscore', 'peptideprophet_probability', 'number_of_enzymatic_termini',
+    #     'number_of_missed_cleavages', 'protein_start', 'protein_end', 'intensity', 'assigned_modifications', 'observed_modifications',
+    #     'm_15_9949', 'm_15_9949_best_localization', 'sty_79_9663', 'sty_79_9663_best_localization', 'purity', 'is_unique', 'protein',
+    #     'protein_id', 'entry_name', 'gene', 'protein_description', 'mapped_genes', 'mapped_proteins', 'TMT_126', 'TMT_127_N',
+    #     'TMT_127_C', 'TMT_128_N', 'TMT_128_C', 'TMT_129_N', 'TMT_129_C', 'TMT_130_N', 'TMT_130_C', 'TMT_131_N', 'TMT_131_C',
+    #     'TMT_132_N', 'TMT_132_C', 'TMT_133_N', 'TMT_133_C', 'TMT_134_N', 'position_absolut', 'fifteenmer', 'protein_length', 'tmt_sum',
+    #     'TMT_126_ratio', 'TMT_127_N_ratio', 'TMT_127_C_ratio', 'TMT_128_N_ratio', 'TMT_128_C_ratio', 'TMT_129_N_ratio',
+    #     'TMT_129_C_ratio', 'TMT_130_N_ratio', 'TMT_130_C_ratio', 'TMT_131_N_ratio', 'TMT_131_C_ratio', 'TMT_132_N_ratio',
+    #     'TMT_132_C_ratio', 'TMT_133_N_ratio', 'TMT_133_C_ratio', 'TMT_134_N_ratio', 'TMT_126_intensity', 'TMT_127_N_intensity',
+    #     'TMT_127_C_intensity', 'TMT_128_N_intensity', 'TMT_128_C_intensity', 'TMT_129_N_intensity', 'TMT_129_C_intensity',
+    #     'TMT_130_N_intensity', 'TMT_130_C_intensity', 'TMT_131_N_intensity', 'TMT_131_C_intensity', 'TMT_132_N_intensity',
+    #     'TMT_132_C_intensity', 'TMT_133_N_intensity', 'TMT_133_C_intensity', 'TMT_134_N_intensity', 'highest_prob'],
+    #     dtype='object')
+    finalres = process_results(fullres)
+    # finalres is a dict with keys modi ( sty_79_9663, k_42_0106, ... )
+    # and values the concatenated dataframe of all sites, along with tmt quant if applicable
+    save_results(finalres, psms[0])
+
+
+def load_and_validate_files(psm_path, fasta_path, uniprot_check):
+    logger.info(f"Loading {psm_path}")
+    df = io.read_psm_file(psm_path)
+    io.validate_psm_file(df)
 
     if uniprot_check:
-        df = mapper.add_uniprot(df)  #
+        df = mapper.add_uniprot(df)
 
-    logger.info(f"loading {fasta}")
-    # fa = io.read_fasta(fasta)
+    logger.info(f"Loading {fasta_path}")
+    fasta_data = Fasta(fasta_path)
 
-    fa = pyfaidx.Fasta(fasta)
+    # try load phosphositeplus fasta
+    # needs to be downloaded from https://www.phosphosite.org/staticDownloads manually (free non commercial)
     try:
-        fa_psp_ref = io_external.read_psite_fasta()
+        # fasta_data.psp_ref = io_external.read_psite_fasta() ##??
+        fa_psp_ref = io_external.read_psite_fasta()  ##??
     except FileNotFoundError:
-        logger.warning("phosphositeplus fasta not found")
+        logger.warning("PhosphositePlus fasta not found")
+        # fasta_data.psp_ref = None # ??
         fa_psp_ref = None
+    return df, fasta_data, fa_psp_ref  #
 
-    # g2 = df2.groupby("protein")
-    # g3 = df3.group_by("protein")
 
-    # breakpoint()
-
-    # def process_frame(key_frame, fa, modisite):
-    #     key, frame = key_frame
-    #     # if 'Cont' not in key:
-    #     #     print()
-    #     #     import ipdb; ipdb.set_trace()
-    #     # subfa = fa[(fa["id"] == key) & (~fa["id"].str.startswith(DECOY_FLAG))]
-    #     try:
-    #         subfa = fa[key]
-    #     except KeyError:
-    #         logger.info(f"skipping key {key}, not found in fasta")
-    #         return
-    #     seqinfo = io.extract_info_from_header(subfa.name)
-    #     seqinfo["sequence"] = subfa.seq
-    #     if len(subfa) == 0:
-    #         logger.info(f"skipping key {key}, db mismatch")
-    #         return
-    #     # seqinfo = subfa.iloc[0].to_dict()
-    #     res = modisite.main(frame, seqinfo)
-    #     return res
-
-    # fullres = list()
-
-    # if cores == 1:
-    #     for item in tqdm(g):
-    #         res = process_frame(item, fa, modisite)
-    #         fullres.append(res)
-
-    # if cores > 1:
-    #     with ThreadPoolExecutor() as executor:
-    #         futures = {
-    #             executor.submit(process_frame, item, fa, modisite): item for item in g
-    #         }
-
-    #         for future in tqdm(
-    #             as_completed(futures),
-    #             total=len(futures),
-    #             mininterval=0.4,
-    #             smoothing=0.1,
-    #         ):
-    #             try:
-    #                 result = future.result()
-    #                 fullres.append(result)
-    #             except Exception as e:
-
-    #                 # print(f"An error occurred: {e}")
-    #                 pass
-
-    # g = df.groupby("protein")
-    # fullres = run_pipeline(g, fa, cores=cores)
-
-    fullres = run_pipeline(df, fa, fa_psp_ref=fa_psp_ref, cores=cores)
-
-    finalres = dict()
-    for col in VALID_MODI_COLS:  # of form ["sty_79_9663", "k_42_0106", ...]
-        frames = list()
-        for items in fullres:
-            vals = items.get(col)
-            if vals is None:
-                continue
-            # vals = [x for x in vals if x is not None]
-            if len(vals) == 0:
-                logger.warning(f"no results returned for {col}")
-                continue
-            frames.append(vals)
-        if len(frames) != 0:
+def process_results(fullres):
+    finalres = {}
+    for col in VALID_MODI_COLS:
+        frames = [items.get(col) for items in fullres if items.get(col) is not None]
+        if frames:
             finalres[col] = pd.concat(frames, ignore_index=True)
-    # res1 = [x.get("sty_79_9663") for x in fullres if x is not None]
-    # res1 = [x for x in res1 if x is not None]
-    # if len(res1) == 0:
-    #     logger.error("no results returned")
-    #     sys.exit(1)
+        else:
+            pass  # not all need to be present
+            # logger.warning(f"No results returned for {col}")
+    return finalres
 
-    # fullres_df = pd.concat(res1, ignore_index=True)
 
-    infile = pathlib.Path(psms[0])
+def save_results(finalres, input_path):
+    infile = pathlib.Path(input_path)
     for key, val in finalres.items():
         outfile = infile.parent / f"{key}_site_annotation_notreduced.tsv"
-        logger.info(f"writing {outfile}")
+        logger.info(f"Writing {outfile}")
         val.to_csv(outfile, sep="\t", index=False)
-
-    # with ProcessPoolExecutor() as executor:
-    #     futures = {executor.submit(process_row, row): row for index, row in df.iterrows()}
-    #     for future in as_completed(futures):
-    #         peptide_to_proteins = future.result()
-    #         for peptide, proteins in peptide_to_proteins.items():
-    #             all_peptide_to_proteins[peptide].extend(proteins)
-
-
-# # not using, for later
-# def process_frame(key_frame, fa, modisite):
-#     key, frame = key_frame
-#     subfa = fa[fa["id"] == key]
-#     assert len(subfa) == 1
-#     seqinfo = subfa.iloc[0].to_dict()
-#     res = modisite.main(frame, seqinfo)
-#     return res
-
-
-# def main_function(g, fa, modisite):
-#     fullres = []
-
-#     with ThreadPoolExecutor() as executor:
-#         futures = {
-#             executor.submit(process_frame, item, fa, modisite): item for item in g
-#         }
-
-#         for future in tqdm(as_completed(futures), total=len(futures)):
-#             try:
-#                 result = future.result()
-#                 fullres.append(result)
-#             except Exception as e:
-#                 print(f"An error occurred: {e}")
-
-#     return fullres

@@ -16,18 +16,20 @@ logger = get_logger(__file__)
 
 
 def process_frame(key_frame, fa, fa_psp_ref=None):
+    # logger.debug(f"processing {key_frame}")
     key, frame = key_frame
     # if 'Cont' not in key:
     #     print()
-    #     import ipdb; ipdb.set_trace()
     # subfa = fa[(fa["id"] == key) & (~fa["id"].str.startswith(DECOY_FLAG))]
+    # import ipdb; ipdb.set_trace()
     try:
         subfa = fa[key]
     except KeyError:
         logger.info(f"skipping key {key}, not found in fasta")
         return
     seqinfo = io.extract_info_from_header(subfa.name)
-    seqinfo["sequence"] = subfa.seq
+    # seqinfo["sequence"] = subfa.seq
+    seqinfo["sequence"] = str(subfa)
 
     if fa_psp_ref is not None and "uniprot_id" in frame.columns:
         try:
@@ -39,7 +41,8 @@ def process_frame(key_frame, fa, fa_psp_ref=None):
             pass
         seqinfo["psp"] = dict(
             name=subfa_psp.name,
-            sequence=subfa_psp.seq,
+            # sequence=subfa_psp.seq,
+            sequence=str(subfa_psp),
             name_raw=subfa_psp.raw.split("\n")[0],
         )
 
@@ -59,6 +62,7 @@ def run_pipeline(
     cores=1,
 ) -> list:
 
+    # import ipdb; ipdb.set_trace()
     modis_for_processing = set(df.columns) & set(VALID_MODI_COLS)
 
     g = df.groupby("protein")

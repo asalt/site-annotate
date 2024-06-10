@@ -33,12 +33,11 @@ def test_run():
     fa = test_files.get("fasta")
 
     runner = CliRunner()
-    result = runner.invoke(run, ["--cores", "2", "--psms", psms, "--fasta", fa,
+    result = runner.invoke(run, ["--cores", "1", "--psms", psms, "--fasta", fa,
     "--no-uniprot-check"
     ])
 
     # assert result.exit_code == 0
-    # import pdb; pdb.set_trace()
     try:
         assert result.exit_code == 0
         assert result.exception is None
@@ -48,3 +47,6 @@ def test_run():
         print(''.join(tb))
         raise e
 
+
+if __name__ == "__main__":
+    test_run()

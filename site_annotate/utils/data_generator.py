@@ -48,19 +48,20 @@ def generate_test_data(n_rows=16, seed=43):
         "RTScore": np.random.uniform(0.004, 23, size=n_rows),
         "Expectation": np.random.uniform(0.004, 23, size=n_rows),
         "Hyperscore": 30 * np.random.beta(5, 2, size=n_rows),
-        "Nextscore": 30 * np.random.beta(2, 2, size=n_rows), #np.random.uniform(0, 25, size=n_rows),
+        "Nextscore": 30
+        * np.random.beta(2, 2, size=n_rows),  # np.random.uniform(0, 25, size=n_rows),
         "PeptideProphet Probability": np.random.uniform(0.85, 1, size=n_rows),
         "Number of Enzymatic Termini": np.random.choice([2], size=n_rows),  # Always 2
         "Number of Missed Cleavages": np.random.randint(
             0, 3, size=n_rows
         ),  # Integer between 0 and 2
         "Protein Start": np.random.randint(0, 890, size=n_rows),  # Random integer
-        #"Protein End": np.random.randint(112, 899, size=n_rows),  # Random integer  not guaranteed to be greater than start
+        # "Protein End": np.random.randint(112, 899, size=n_rows),  # Random integer  not guaranteed to be greater than start
         "Intensity": np.random.uniform(
             2e6, 5.6e9, size=n_rows
         ),  # Wide range of intensities
         "STY:79.9663 Best Localization": np.random.beta(3, 1, size=n_rows),
-        "Purity": 0.6 * np.random.beta(3, 1, size=n_rows) + .4,
+        "Purity": 0.6 * np.random.beta(3, 1, size=n_rows) + 0.4,
         # Add sample columns
         **{
             f"sample-0{i+1}": np.random.uniform(0, 300000, size=n_rows)
@@ -70,6 +71,6 @@ def generate_test_data(n_rows=16, seed=43):
 
     # Create DataFrame
     df = pd.DataFrame(data)
-    df["Protein End"] = df["Protein Start"] + df['Peptide'].apply(len)
+    df["Protein End"] = df["Protein Start"] + df["Peptide"].apply(len)
 
     return df

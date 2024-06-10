@@ -126,82 +126,143 @@ def psp_assigner(x, psp_sequence):
     return pos
 
 
-def main(df: pd.DataFrame, seqinfo: dict, isobaric=True):
+def extract_and_transform_data(df, col):
     """
+    Extract data and transform into DataFrame with original indices.
+    Extract non-null data from the specified column, apply position extraction and transformation to a DataFrame format,
+    and reset index while preserving the original index in a new column.
+
+    Parameters:
+    df (pd.DataFrame): The DataFrame from which to extract data.
+    col (str): The column name in df from which to extract non-null values.
+
+    Returns:
+    pd.DataFrame: A DataFrame with the extracted and transformed data, including the original index.
+
+    """
+    _data = df[~df[col].isna()][col]
+    res = _data.apply(extract_positions)  # res is a pd.Series
+    res_series_of_dfs = res.apply(position_dict_to_df)
+    res_df = reset_inner_index(res_series_of_dfs)
+    return res_df
+
+
+def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
+    """
+    Merge and enhance DataFrame with absolute positions and PSP data if available.
+
+    Parameters:
+    res_df (pd.DataFrame): The DataFrame to be enhanced.
+    df (pd.DataFrame): The original DataFrame to merge with res_df.
+    seqinfo (dict): A dictionary containing sequence information, potentially including PhosphoSitePlus data.
+
+    Returns:
+    pd.DataFrame: The enhanced DataFrame with additional positional data.
+    """
+
+    df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
+    df_positions["position_absolut"] = (
+        df_positions["position_relative"] + df_positions["protein_start"] - 1
+    )
+    if "psp" in seqinfo:
+        psp_sequence = seqinfo["psp"]["sequence"]
+        psp_position_start = df_positions.apply(
+            lambda x: psp_assigner(x, psp_sequence),
+            axis=1,
+        )
+        df_positions["psp_position_start"] = psp_position_start
+        df_positions["position_absolut_psp"] = (
+            df_positions["position_relative"] + df_positions["psp_position_start"] - 1
+        )
+    return df_positions
+
+
+def compute_additional_attributes(df_positions, sequence) -> pd.DataFrame:
+    """
+    Compute and append additional attributes such as fifteenmer sequences based on absolute positions and protein length.
+
+    Parameters:
+    df_positions (pd.DataFrame): The DataFrame to compute additional attributes for.
+    sequence (str): The sequence string used for attribute calculations.
+
+    Returns:
+    pd.DataFrame: The DataFrame with additional attributes.
+    """
+
+    df_positions["fifteenmer"] = df_positions.apply(
+        lambda x: create_15mer(sequence, x["position_absolut"]), axis=1
+    )
+    df_positions["protein_length"] = len(sequence)
+    return df_positions
+
+
+def process_probability_and_filter(df_positions, col, cutoff=0.5, take_best=True):
+    """Calculate max probability and filter data."""
+    """
+    Calculate the highest probability of localization per spectrum and peptide, and filter the positions
+    based on these probabilities.
+
+    Parameters:
+    df_positions (pd.DataFrame): DataFrame containing probability data to process.
+    col (str): The column name to use for calculating best localization probabilities.
+
+    Returns:
+    pd.DataFrame: The DataFrame with positions filtered based on calculated probabilities.
+    """
+
+    best_probability_col = col + "_best_localization"
+    maxprob = df_positions.groupby(["spectrum", "peptide"])[best_probability_col].max()
+    maxprob.name = "highest_prob"
+    maxprob = maxprob.reset_index()
+    df_positions = df_positions.merge(maxprob, on=["spectrum", "peptide"])
+    if take_best:
+        _res = df_positions[
+            (df_positions.prob > cutoff)
+            | (df_positions.prob >= df_positions["highest_prob"])
+        ]
+    else:
+        _res = df_positions[(df_positions.prob > cutoff)]
+
+    return _res
+
+
+def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
+    """
+    df is a DataFrame with columns:
+        - protein
+        - protein_start
+        - peptide
+        - spectrum
+        - intensity
+        - columns of form "sty_79_9663", "k_42_0106", ... that are probabilities of modification at a given position
+          (e.g. S(0.0416)ES(0.8863)AENHS(0.0405)Y(0.0316)AK )
+        - (optional) TMT_126, TMT_127, ... columns that are intensities of isobaric tags
+
     seqinfo should/may have keys of:
-    - id
-    - description
-    - sequence
-    - geneid
-    - taxon
-    - symbol
-    - ENSP (only protein specific designator supported now)
+        - id
+        - description
+        - sequence
+        - geneid
+        - taxon
+        - symbol
+        - ENSP (only protein specific designator supported now)
     """
 
     sequence = seqinfo["sequence"]
-
     RESULTS = dict()
-    # breakpoint()
 
-    # VALID_MODI_COLS = [ # here as example, this is defined in constants.py
-    #     "sty_79_9663",
-    #     "k_42_0106",
-    #     "k_43_0058",
-    # ]
     for col in VALID_MODI_COLS:
-        if col not in df.columns:
-            continue
-        if len(df[~df[col].isna()]) == 0:
+        if col not in df.columns or len(df[~df[col].isna()]) == 0:
             continue
 
-        # at the moment, test_runner.test_flow tests the following routine
-        _data = df[~df[col].isna()][col]
-        res = _data.apply(extract_positions)  # res is a pd.Series
-        res_series_of_dfs = res.apply(position_dict_to_df)
-        res_df = reset_inner_index(res_series_of_dfs)
-        #
-
-        df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
-        df_positions["position_absolut"] = (
-            df_positions["position_relative"] + df_positions["protein_start"] - 1
-        )
-        # here try phosphosite plus position map check
-        if "psp" in seqinfo:  # this does
-            psp_sequence = seqinfo["psp"]["sequence"]
-            psp_position_start = df_positions.apply(
-                lambda x: psp_assigner(x, psp_sequence),
-                axis=1,
-            )
-            df_positions["psp_position_start"] = psp_position_start
-            df_positions["position_absolut_psp"] = (
-                df_positions["position_relative"]
-                + df_positions["psp_position_start"]
-                - 1
-            )
-
-        df_positions["fifteenmer"] = df_positions.apply(
-            lambda x: create_15mer(sequence, x["position_absolut"]), axis=1
-        )
-
-        df_positions["protein_length"] = len(sequence)
+        res_df = extract_and_transform_data(df, col)
+        df_positions = enhance_dataframe(res_df, df, seqinfo)
+        df_positions = compute_additional_attributes(df_positions, sequence)
 
         if isobaric:
             df_positions = quant_isobaric_site(df_positions)
 
-        best_probability_col = col + "_best_localization"
-
-        maxprob = df_positions.groupby(["spectrum", "peptide"])[
-            best_probability_col
-        ].max()
-        maxprob.name = "highest_prob"
-        maxprob = maxprob.reset_index()
-        df_positions = df_positions.merge(maxprob, on=["spectrum", "peptide"])
-
-        df_positions_filtered = df_positions[
-            (df_positions.prob > 0.5)
-            | (df_positions.prob >= df_positions["highest_prob"])
-        ]
-
+        df_positions_filtered = process_probability_and_filter(df_positions, col)
         RESULTS[col] = df_positions_filtered
 
     return RESULTS
