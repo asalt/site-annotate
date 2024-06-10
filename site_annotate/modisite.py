@@ -118,12 +118,15 @@ def quant_isobaric_site(psms_positions):
     return fullres
 
 
-def psp_assigner(x, psp_sequence):
+def psp_assigner(x, psp_sequence: str, orig_sequece: str):
     # this is a bit of a hack to ensure we don't match the first position of the protein
     # if the original "position_start" is a second/repeated peptide occurance in the protein
-    start = int(max(x["protein_start"] - 4, 0))
-    pos = psp_sequence[int(max(x["protein_start"] - 4, 0))].find(x["peptide"]) + start
-    return pos
+
+    # start = int(max(x["protein_start"] - 4, 0))
+    # pos = psp_sequence[:start].find(x["peptide"]) + start # is this necessary?
+    pos = psp_sequence.find(x["peptide"])
+
+    return pos + 1
 
 
 def extract_and_transform_data(df, col):
@@ -165,15 +168,23 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
         df_positions["position_relative"] + df_positions["protein_start"] - 1
     )
     if "psp" in seqinfo:
+        orig_sequence = seqinfo["sequence"]
         psp_sequence = seqinfo["psp"]["sequence"]
-        psp_position_start = df_positions.apply(
-            lambda x: psp_assigner(x, psp_sequence),
+        psp_position_abs = df_positions.apply(
+            lambda x: psp_assigner(x, psp_sequence, orig_sequence),
             axis=1,
         )
-        df_positions["psp_position_start"] = psp_position_start
+        df_positions["protein_start_psp"] = psp_position_abs
         df_positions["position_absolut_psp"] = (
-            df_positions["position_relative"] + df_positions["psp_position_start"] - 1
+            df_positions["protein_start_psp"] + df_positions["position_relative"] - 1
         )
+        # minus 1 because e.g.:
+        # position_relative == 1
+        # position_start = 500
+        # sequence.find(peptide) == 499
+        # but 1 index converts the result to 500
+        # therefore we need to subtract 1 after adding the (1 indexed) relative position
+        # add two 1 indexed sets together requires subtraction of 1 to remain 1 indexed
     return df_positions
 
 
@@ -226,6 +237,117 @@ def process_probability_and_filter(df_positions, col, cutoff=0.5, take_best=True
     return _res
 
 
+def reorder_nice(df):
+    order = [
+        "protein",
+        "uniprot_id",
+        "fifteenmer",
+        "peptide",
+        "modified_peptide",
+        "protein_start",
+        "protein_end",
+        "protein_start_psp",
+        "position_relative",
+        "position_absolut",
+        "position_absolut_psp",
+        "AA",
+        "prob",
+        "original_index",
+        "spectrum",
+        "spectrum_file",
+        "extended_peptide",
+        "prev_aa",
+        "next_aa",
+        "peptide_length",
+        "charge",
+        "retention",
+        "observed_mass",
+        "calibrated_observed_mass",
+        "observed_m_z",
+        "calibrated_observed_m_z",
+        "calculated_peptide_mass",
+        "calculated_m_z",
+        "delta_mass",
+        "spectralsim",
+        "rtscore",
+        "expectation",
+        "hyperscore",
+        "nextscore",
+        "peptideprophet_probability",
+        "number_of_enzymatic_termini",
+        "number_of_missed_cleavages",
+        "intensity",
+        "assigned_modifications",
+        "observed_modifications",
+        "m_15_9949",
+        "m_15_9949_best_localization",
+        "sty_79_9663",
+        "sty_79_9663_best_localization",
+        "purity",
+        "protein_id",
+        "entry_name",
+        "gene",
+        "protein_description",
+        "mapped_genes",
+        "mapped_proteins",
+        "is_unique",
+        "TMT_126",
+        "TMT_127_N",
+        "TMT_127_C",
+        "TMT_128_N",
+        "TMT_128_C",
+        "TMT_129_N",
+        "TMT_129_C",
+        "TMT_130_N",
+        "TMT_130_C",
+        "TMT_131_N",
+        "TMT_131_C",
+        "TMT_132_N",
+        "TMT_132_C",
+        "TMT_133_N",
+        "TMT_133_C",
+        "TMT_134_N",
+        "protein_length",
+        "tmt_sum",
+        "TMT_126_ratio",
+        "TMT_127_N_ratio",
+        "TMT_127_C_ratio",
+        "TMT_128_N_ratio",
+        "TMT_128_C_ratio",
+        "TMT_129_N_ratio",
+        "TMT_129_C_ratio",
+        "TMT_130_N_ratio",
+        "TMT_130_C_ratio",
+        "TMT_131_N_ratio",
+        "TMT_131_C_ratio",
+        "TMT_132_N_ratio",
+        "TMT_132_C_ratio",
+        "TMT_133_N_ratio",
+        "TMT_133_C_ratio",
+        "TMT_134_N_ratio",
+        "TMT_126_intensity",
+        "TMT_127_N_intensity",
+        "TMT_127_C_intensity",
+        "TMT_128_N_intensity",
+        "TMT_128_C_intensity",
+        "TMT_129_N_intensity",
+        "TMT_129_C_intensity",
+        "TMT_130_N_intensity",
+        "TMT_130_C_intensity",
+        "TMT_131_N_intensity",
+        "TMT_131_C_intensity",
+        "TMT_132_N_intensity",
+        "TMT_132_C_intensity",
+        "TMT_133_N_intensity",
+        "TMT_133_C_intensity",
+        "TMT_134_N_intensity",
+        "highest_prob",
+    ]
+    _order = [x for x in order if x in df.columns]
+    _extra = set(df.columns) - set(_order)
+    return df[_order]
+
+
 def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
     """
     df is a DataFrame with columns:
@@ -263,6 +385,7 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
             df_positions = quant_isobaric_site(df_positions)
 
         df_positions_filtered = process_probability_and_filter(df_positions, col)
+        df_positions_filtered = reorder_nice(df_positions_filtered)
         RESULTS[col] = df_positions_filtered
 
     return RESULTS

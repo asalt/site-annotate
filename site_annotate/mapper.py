@@ -1,3 +1,5 @@
+# mapper.py
+
 import os
 from pathlib import Path
 import re
@@ -25,7 +27,93 @@ data_dir = set_data_dir()
 sqlitedict_filename = data_dir / "mappings.sqlite"
 
 
+def get_db():
+    return sqlitedict.SqliteDict(
+        str(sqlitedict_filename),
+        tablename="ensembl_uniprot_mapping",
+        autocommit=False,
+        encode=json.dumps,
+        decode=json.loads,
+    )
+
+
+def update_db(db, items):
+    for item in items:
+        db[item["query"]] = item
+    db.commit()
+
+
+def find_ENSP(protein):
+    ENSP_pattern = re.compile(r"(?<=ENSP\|)(.*?)(?=\|)")
+    search_result = ENSP_pattern.search(protein)
+    return search_result.group() if search_result else None
+
+
+def fetch_uniprot_info_from_db(db, ENSP_values):
+    return {ENSP: db[ENSP] for ENSP in ENSP_values if ENSP in db}
+
+
+def fetch_uniprot_info_online(missing_ENSP):
+    mg = MyGeneInfo()
+    return mg.querymany(
+        missing_ENSP,
+        scopes="ensembl.protein",
+        fields="uniprot.Swiss-Prot,uniprot.TrEMBL,name,symbol,other_names,entrezgene,taxid",
+    )
+
+
+def map_proteins_to_uniprot(df, final_items):
+    lookup_dict = {}
+    proteins = df["protein"].dropna().tolist()
+    ENSPs = df["protein"].dropna().map(find_ENSP).tolist()
+
+    # for protein, ENSP in df['protein'].dropna().map(find_ENSP).items():
+    for protein, ENSP in zip(proteins, ENSPs):
+        uniprot_info = final_items.get(ENSP, {}).get("uniprot")
+        if uniprot_info:
+            swissprot = uniprot_info.get("Swiss-Prot")
+            if swissprot:
+                lookup_dict[protein] = swissprot
+            else:
+                logger.debug(f"No Swiss-Prot info for {protein}")
+        else:
+            logger.debug(f"No UniProt info for {protein}")
+    df["uniprot_id"] = df["protein"].map(lookup_dict)
+    return df
+
+
 def add_uniprot(df):
+    """
+    df has a column `protein` that is a fasta header string
+    with embedded ENSP values.
+    e.g.: gene|ENSP|ENSP00000440235|more
+    This tries to map ENSP values to uniprot IDs
+    in the future could add support for other identifiers
+    """
+    if "uniprot_id" in df.columns or "acc_id" in df.columns:
+        return (
+            df.rename(columns={"acc_id": "uniprot_id"})
+            if "acc_id" in df.columns
+            else df
+        )
+
+    db = get_db()
+    proteins_ENSP = {
+        protein: find_ENSP(protein) for protein in df["protein"].dropna().unique()
+    }
+    final_items = fetch_uniprot_info_from_db(db, proteins_ENSP.values())
+
+    missing_ENSP = set(proteins_ENSP.values()) - set(final_items.keys())
+    if missing_ENSP:
+        # import ipdb; ipdb.set_trace()
+        online_info = fetch_uniprot_info_online(missing_ENSP)
+        update_db(db, online_info)
+        final_items.update({item["query"]: item for item in online_info})
+
+    return map_proteins_to_uniprot(df, final_items)
+
+
+def _xxadd_uniprot(df):
     """
     tries to extract ENSP value from `protein` column and then query mygene.info for uniprot info
     """

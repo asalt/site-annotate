@@ -39,11 +39,12 @@ def process_frame(key_frame, fa, fa_psp_ref=None):
         except KeyError:
             # logger.info(f"skipping key {key}, not found in psp fasta")
             pass
+
         seqinfo["psp"] = dict(
             name=subfa_psp.name,
             # sequence=subfa_psp.seq,
             sequence=str(subfa_psp),
-            name_raw=subfa_psp.raw.split("\n")[0],
+            name_raw=subfa_psp.long_name,  # .split("\n")[0],??
         )
 
     if len(subfa) == 0:
@@ -61,6 +62,13 @@ def run_pipeline(
     fa_psp_ref: pyfaidx.Fasta = None,
     cores=1,
 ) -> list:
+
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("df should be a pandas DataFrame")
+    if not isinstance(fa, pyfaidx.Fasta):
+        raise ValueError("fa should be a pyfaidx.Fasta object")
+    if fa_psp_ref is not None and not isinstance(fa_psp_ref, pyfaidx.Fasta):
+        raise ValueError("fa_psp_ref should be a pyfaidx.Fasta object")
 
     # import ipdb; ipdb.set_trace()
     modis_for_processing = set(df.columns) & set(VALID_MODI_COLS)

@@ -190,7 +190,10 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
 @main.command()
 @click.option("--cores", default=1, show_default=True)
 @click.option(
-    "-p", "--psms", type=click.Path(exists=True, dir_okay=False), multiple=True
+    "-p",
+    "--psms",
+    type=click.Path(exists=True, dir_okay=False),
+    multiple=True,
 )
 @click.option(
     "-o",
@@ -211,7 +214,7 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
         return
 
     df, fasta_data, fa_psp_ref = load_and_validate_files(psms[0], fasta, uniprot_check)
-    fullres = run_pipeline(df, fasta_data, cores)
+    fullres = run_pipeline(df, fasta_data, fa_psp_ref, cores)
     # type fullres is list of dicts
     # fullres[0].keys()
     # dict_keys(['sty_79_9663'])
@@ -250,7 +253,6 @@ def load_psite_fasta():
 
 def load_and_validate_files(psm_path, fasta_path, uniprot_check):
 
-
     # try load phosphositeplus fasta
     # needs to be downloaded from https://www.phosphosite.org/staticDownloads manually (free non commercial)
     # fa_psp_ref = load_psite_fasta()
@@ -260,7 +262,9 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
 
     # fasta_data = Fasta(fasta_path)
 
-    with ThreadPoolExecutor(max_workers=3) as executor:  # there's some significant postprocessing these funcs do that makes this worth it, I think
+    with ThreadPoolExecutor(
+        max_workers=3
+    ) as executor:  # there's some significant postprocessing these funcs do that makes this worth it, I think
         # need to time test this with larger files
         # Submit the function to the executor
         psp_future = executor.submit(load_psite_fasta)
