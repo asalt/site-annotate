@@ -19,6 +19,7 @@ def extract_positions(sequence):
     result = {}
     position = 1
     for match in matches:
+        # import ipdb; ipdb.set_trace()
         aa, prob = match.groups()
         # Find the correct position in the cleaned sequence
         position = cleaned_sequence.find(aa, position - 1) + 1
@@ -118,17 +119,6 @@ def quant_isobaric_site(psms_positions):
     return fullres
 
 
-def psp_assigner(x, psp_sequence: str, orig_sequece: str):
-    # this is a bit of a hack to ensure we don't match the first position of the protein
-    # if the original "position_start" is a second/repeated peptide occurance in the protein
-
-    # start = int(max(x["protein_start"] - 4, 0))
-    # pos = psp_sequence[:start].find(x["peptide"]) + start # is this necessary?
-    pos = psp_sequence.find(x["peptide"])
-
-    return pos + 1
-
-
 def extract_and_transform_data(df, col):
     """
     Extract data and transform into DataFrame with original indices.
@@ -164,19 +154,35 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
     """
 
     df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
-    df_positions["position_absolut"] = (
-        df_positions["position_relative"] + df_positions["protein_start"] - 1
+    # df_positions["position_absolut"] = (
+    # df_positions["position_relative"] + df_positions["protein_start"]
+    # )
+    orig_sequence = seqinfo["sequence"]
+    # import ipdb; ipdb.set_trace()
+    df_positions["position_start"] = df_positions.apply(
+        lambda x: orig_sequence.find(x["peptide"]) + 1, axis=1
     )
+    df_positions["protein_start"] = df_positions.apply(
+        lambda x: orig_sequence.find(x["peptide"]) + 1, axis=1
+    )
+    df_positions["position_absolut"] = (
+        df_positions["position_relative"] + df_positions["position_start"] - 1
+    )
+
+    # pos = psp_sequence.find(x["peptide"])
+
     if "psp" in seqinfo:
         orig_sequence = seqinfo["sequence"]
         psp_sequence = seqinfo["psp"]["sequence"]
-        psp_position_abs = df_positions.apply(
-            lambda x: psp_assigner(x, psp_sequence, orig_sequence),
-            axis=1,
+
+        df_positions["position_start_psp"] = df_positions.apply(
+            lambda x: psp_sequence.find(x["peptide"]) + 1, axis=1
         )
-        df_positions["protein_start_psp"] = psp_position_abs
+        df_positions["protein_start_psp"] = df_positions.apply(
+            lambda x: psp_sequence.find(x["peptide"]) + 1, axis=1
+        )
         df_positions["position_absolut_psp"] = (
-            df_positions["protein_start_psp"] + df_positions["position_relative"] - 1
+            df_positions["position_start_psp"] + df_positions["position_relative"] - 1
         )
         # minus 1 because e.g.:
         # position_relative == 1
@@ -372,11 +378,13 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
 
     sequence = seqinfo["sequence"]
     RESULTS = dict()
+    # import ipdb; ipdb.set_trace()
 
     for col in VALID_MODI_COLS:
         if col not in df.columns or len(df[~df[col].isna()]) == 0:
             continue
 
+        # import ipdb; ipdb.set_trace()
         res_df = extract_and_transform_data(df, col)
         df_positions = enhance_dataframe(res_df, df, seqinfo)
         df_positions = compute_additional_attributes(df_positions, sequence)

@@ -118,14 +118,16 @@ def add_uniprot(df):
 def add_annotations(data):
     outdata = {}
     for k, df in data.items():
+        if "uniprot_id" in df.columns:
+            outdata[k] = df
+            logger.warning(f"{k} no uniprot id present, skipping")
+            continue
         # data[k] = add_uniprot(df)
         psp_info = io_external.get_psiteplus_file(k)
         if psp_info is None:
             logger.warning(f"no info for {k}")
             continue
-        import ipdb
 
-        ipdb.set_trace()
         df["_upper"] = df["fifteenmer"].str.upper()
         psp_info["_upper"] = psp_info["site_+_7_aa"].str.upper()
 
@@ -135,6 +137,7 @@ def add_annotations(data):
             right_on=["acc_id", "_upper"],
             how="left",
         )
+        dfm = dfm[[x for x in [*psp_info.columns, *df.columns] if x in dfm.columns]]
         outdata[k] = dfm
 
     return outdata
