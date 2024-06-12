@@ -3,8 +3,10 @@ import re
 import pandas as pd
 from collections import defaultdict
 
-from .constants import VALID_MODI_COLS
+from .constants import VALID_MODI_COLS, MODI_ABBREVS
 from . import log
+
+pd.options.display.max_columns = 99
 
 logger = log.get_logger(__file__)
 
@@ -19,7 +21,6 @@ def extract_positions(sequence):
     result = {}
     position = 1
     for match in matches:
-        # import ipdb; ipdb.set_trace()
         aa, prob = match.groups()
         # Find the correct position in the cleaned sequence
         position = cleaned_sequence.find(aa, position - 1) + 1
@@ -91,7 +92,8 @@ def position_dict_to_df(position_dict):
     return df
 
 
-def create_15mer(sequence, position):
+def create_15mer(sequence, position):  # ! position is 1 indexed
+    position = position - 1
     sequence_padded = "_" * 7 + sequence + "_" * 7
     position_padded = position + 7
     position_padded = int(position_padded)  # attempt to have this guaranteed beforehand
@@ -172,6 +174,7 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
     # pos = psp_sequence.find(x["peptide"])
 
     if "psp" in seqinfo:
+        # if seqinfo['psp']['name'] == 'Q9Z2I9':
         orig_sequence = seqinfo["sequence"]
         psp_sequence = seqinfo["psp"]["sequence"]
 
@@ -184,6 +187,9 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
         df_positions["position_absolut_psp"] = (
             df_positions["position_start_psp"] + df_positions["position_relative"] - 1
         )
+        df_positions["all_possible_positions_psp"] = "|".join(
+            map(str, df_positions.position_absolut_psp.tolist())
+        )
         # minus 1 because e.g.:
         # position_relative == 1
         # position_start = 500
@@ -191,6 +197,14 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
         # but 1 index converts the result to 500
         # therefore we need to subtract 1 after adding the (1 indexed) relative position
         # add two 1 indexed sets together requires subtraction of 1 to remain 1 indexed
+        # if seqinfo['psp']['name'] == 'Q9Z2I9':
+        #     import ipdb; ipdb.set_trace()
+        # if orig_sequence != psp_sequence:
+        #     import ipdb; ipdb.set_trace()
+        #     1+1
+    df_positions["all_possible_positions"] = "|".join(
+        map(str, df_positions.position_absolut.tolist())
+    )
     return df_positions
 
 
@@ -206,10 +220,39 @@ def compute_additional_attributes(df_positions, sequence) -> pd.DataFrame:
     pd.DataFrame: The DataFrame with additional attributes.
     """
 
+    # if df_positions.protein.str.contains('Sucla2').any():
+    #     import ipdb; ipdb.set_trace()
+
     df_positions["fifteenmer"] = df_positions.apply(
         lambda x: create_15mer(sequence, x["position_absolut"]), axis=1
     )
     df_positions["protein_length"] = len(sequence)
+
+    if "symbol" not in df_positions.columns:
+        df_positions["symbol"] = "??"
+
+    df_positions["sitename"] = (
+        df_positions["symbol"]
+        + "_"
+        + df_positions["modi_abbrev"]
+        + df_positions["AA"]
+        + df_positions.position_absolut.astype(str)
+    )
+
+    if "position_absolut_psp" in df_positions.columns:
+        df_positions["sitename2"] = (
+            df_positions["symbol"]
+            + "_"
+            + df_positions["modi_abbrev"]
+            + df_positions["AA"]
+            + df_positions.position_absolut_psp.astype(str)
+        )
+    # df_positions['sitename'] = df_positions.apply(
+    # lambda x: str.join("", [ x['modi_abbrev']
+    # )
+    # df_positions["sitename"] = len(sequence)
+    # import ipdb; ipdb.set_trace()
+
     return df_positions
 
 
@@ -248,6 +291,8 @@ def reorder_nice(df):
         "protein",
         "uniprot_id",
         "fifteenmer",
+        "sitename",
+        "sitename2",
         "peptide",
         "modified_peptide",
         "protein_start",
@@ -256,6 +301,8 @@ def reorder_nice(df):
         "position_relative",
         "position_absolut",
         "position_absolut_psp",
+        "all_possible_positions",
+        "all_possible_positions_psp",
         "AA",
         "prob",
         "original_index",
@@ -351,7 +398,20 @@ def reorder_nice(df):
     ]
     _order = [x for x in order if x in df.columns]
     _extra = set(df.columns) - set(_order)
+    if _extra:
+        _order = _order + list(_extra)
     return df[_order]
+
+
+# def annotate(df):
+#     from .io import extract_info_from_header
+#     if 'protein' not in df.columns:
+#         return
+#     res = df.protein.apply(extract_info_from_header)
+#     res_df = pd.concat(res.apply(pd.DataFrame.from_dict, orient='index').values, axis=1)
+#     res_df.columns = res.index
+#     df = df.join(res_df.T, how='left')
+#     return df
 
 
 def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
@@ -381,12 +441,13 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
     # import ipdb; ipdb.set_trace()
 
     for col in VALID_MODI_COLS:
+        modi_abbrev = MODI_ABBREVS.get(col, "?")
         if col not in df.columns or len(df[~df[col].isna()]) == 0:
             continue
 
-        # import ipdb; ipdb.set_trace()
         res_df = extract_and_transform_data(df, col)
         df_positions = enhance_dataframe(res_df, df, seqinfo)
+        df_positions["modi_abbrev"] = modi_abbrev
         df_positions = compute_additional_attributes(df_positions, sequence)
 
         if isobaric:
@@ -395,5 +456,6 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         df_positions_filtered = process_probability_and_filter(df_positions, col)
         df_positions_filtered = reorder_nice(df_positions_filtered)
         RESULTS[col] = df_positions_filtered
+        # import ipdb; ipdb.set_trace()
 
     return RESULTS

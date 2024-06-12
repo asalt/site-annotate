@@ -12,4 +12,11 @@ PHOSPHOSITEPLUS_ANNOTATIONS = {
     "regulatory_sites": "Regulatory_sites",
 }
 
-# "Acetylation_site_dataset",  "app.log",  "Disease-associated_sites",  "Phosphorylation_site_dataset",  "PhosphoSitePlugin.jar",  "Regulatory_sites",
+# "Acetylation_site_dataset",  "Disease-associated_sites",  "Phosphorylation_site_dataset",  "PhosphoSitePlugin.jar",  "Regulatory_sites",
+
+
+MODI_ABBREVS = {
+    "k_42_0106": "ac",
+    "sty_79_9663": "p",
+    "m_15_9949": "ox",
+}

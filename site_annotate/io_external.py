@@ -62,12 +62,15 @@ def get_psiteplus_file(file_or_abbv, **kwargs):
     if "skiprows" in kwargs:
         skiprows = kwargs.pop("skiprows")
 
+    file = None
     if file_or_abbv in PHOSPHOSITEPLUS_ANNOTATIONS.keys():
         file = PHOSPHOSITEPLUS_ANNOTATIONS[file_or_abbv]
     elif file_or_abbv in PHOSPHOSITEPLUS_ANNOTATIONS.values():
         file = file_or_abbv
     else:
         logger.warning(f"file {file_or_abbv} not found in set constants, may fail")
+    if file is None:
+        return
 
     fullfile = data_dir / file
 
@@ -87,7 +90,7 @@ def get_psiteplus_file(file_or_abbv, **kwargs):
     # return psp
 
 
-def read_psite_fasta(file=None, skiprows=3) -> pyfaidx.Fasta:
+def _read_psite_fasta(file=None, skiprows=3) -> pyfaidx.Fasta:
     """
     custom func to handle phosphositeplus fasta files whereby the first few rows need to be skipped
     """
@@ -114,6 +117,16 @@ def read_psite_fasta(file=None, skiprows=3) -> pyfaidx.Fasta:
         )
         # the whole point of this func is to provide fast acccess to uniprotid : sequence
     return fa
+
+
+_fa = None
+
+
+def read_psite_fasta(file=None, skiprows=3):
+    global _fa
+    if _fa is None:
+        _fa = _read_psite_fasta()
+    return _fa
 
 
 # # Example Usage

@@ -64,6 +64,25 @@ def fetch_uniprot_info_online(missing_ENSP):
     )
 
 
+def resolve_multi_uniprot(uniprot_list) -> str:
+    from .io_external import read_psite_fasta
+
+    fa = read_psite_fasta()  # this is cached/indexed so doesn't hurt to keep "reading"
+    # could rename to "get_psite_fasta"
+
+    _final_record = None
+    _maxlen = 0
+    for _id in uniprot_list:
+        try:
+            record = fa[_id]
+        except KeyError:
+            continue
+        if len(record) > _maxlen:
+            _final_record = _id
+            _maxlen = len(record)
+    return _final_record
+
+
 def map_proteins_to_uniprot(df, final_items):
     lookup_dict = {}
     proteins = df["protein"].dropna().tolist()
@@ -74,6 +93,9 @@ def map_proteins_to_uniprot(df, final_items):
         uniprot_info = final_items.get(ENSP, {}).get("uniprot")
         if uniprot_info:
             swissprot = uniprot_info.get("Swiss-Prot")
+            if isinstance(swissprot, list):  # right now picks the longest
+                picked = resolve_multi_uniprot(swissprot)
+                swissprot = picked
             if swissprot:
                 lookup_dict[protein] = swissprot
             else:
@@ -106,11 +128,16 @@ def add_uniprot(df):
     final_items = fetch_uniprot_info_from_db(db, proteins_ENSP.values())
 
     missing_ENSP = set(proteins_ENSP.values()) - set(final_items.keys())
+    # missing_ENSP = list(filter(missing_ENSP, None))
+    missing_ENSP = [x for x in missing_ENSP if x is not None]
+
     if missing_ENSP:
         # import ipdb; ipdb.set_trace()
         online_info = fetch_uniprot_info_online(missing_ENSP)
         update_db(db, online_info)
         final_items.update({item["query"]: item for item in online_info})
+
+    # xs = [ x for x in final_items.values() if isinstance(x.get('uniprot', {}).get('Swiss-Prot'), list) ]
 
     return map_proteins_to_uniprot(df, final_items)
 
@@ -118,7 +145,7 @@ def add_uniprot(df):
 def add_annotations(data):
     outdata = {}
     for k, df in data.items():
-        if "uniprot_id" in df.columns:
+        if "uniprot_id" not in df.columns:
             outdata[k] = df
             logger.warning(f"{k} no uniprot id present, skipping")
             continue
@@ -224,4 +251,15 @@ def _xxadd_uniprot(df):
         lookup_dict[key] = swissprot_value
 
     df["uniprot_id"] = df["protein"].map(lookup_dict)
+    return df
+
+
+def extract_keyvals_pipedsep(df, col="protein"):
+    from .io import extract_info_from_header
+
+    if col not in df.columns:
+        return
+    res = df[col].apply(extract_info_from_header)
+    res_df = pd.DataFrame.from_records(res)
+    df = df.join(res_df, how="left")
     return df

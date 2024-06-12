@@ -21,7 +21,10 @@ def _reduce_sites(df):
     ]
 
     # Group by 'fifteenmer' and other common columns
-    groupby_cols = ["fifteenmer"] + [x for x in common_cols if x in df.columns]
+    groupby_cols = [
+        "fifteenmer",
+        "sitename",
+    ] + [x for x in common_cols if x in df.columns]
 
     g = df.groupby(groupby_cols)
     # Summarize by calculating the sum of TMT intensities
@@ -61,13 +64,23 @@ def _reduce_sites(df):
 
     result = result.reset_index()
     addl_cls = [
+        "ENST",
+        "ENSG",
+        "geneid",
+        "taxon",
+        "symbol",
         "protein_start",
         "protein_end",
         "protein_start_psp",
         "position_relative",
         "position_absolut",
         "position_absolut_psp",
+        # "sitename",
+        "sitename2",
+        "all_possible_positions",
+        "all_possible_positions_psp",
         "AA",
+        # "ENSP", # already added
     ]
     addl_cols = [x for x in addl_cls if x in df.columns]
 

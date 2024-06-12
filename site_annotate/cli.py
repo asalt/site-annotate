@@ -242,9 +242,11 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
     save_results(finalres, psms[0])
 
     site_reduced = reduce.reduce_sites(finalres)
+    save_results(site_reduced, psms[0], name="site_annotation_reduced")
 
-    # site_reduced = mapper.add_annotations(site_reduced)
-    # save_results(site_reduced, psms[0], name="site_annotation_reduced")
+    site_reduced_mapped = mapper.add_annotations(site_reduced)
+    save_results(site_reduced_mapped, psms[0], name="site_annotation_reduced_mapped")
+
     return
 
 
@@ -292,6 +294,7 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     else:
         logger.info("Failed to load FASTA data.")
 
+    df = mapper.extract_keyvals_pipedsep(df)
     if uniprot_check:
         df = mapper.add_uniprot(df)
 
