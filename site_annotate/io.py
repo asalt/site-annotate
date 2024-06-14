@@ -42,7 +42,19 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
 
     # if not any(df.columns.str.startswith("TMT")):
     df = df.rename(columns=RENAME)
-    return df
+    df["mapped_proteins"] = df["protein"] + "," + df["mapped_proteins"].fillna("")
+    df["mapped_proteins"] = df["mapped_proteins"].apply(
+        lambda x: x.split(",") if x else []
+    )
+
+    # # Step 2: Explode the 'mapped_proteins' column
+    df_exploded = df.explode("mapped_proteins")
+    df_exploded = df_exploded.reset_index(drop=True)
+    # import ipdb
+    # ipdb.set_trace()
+
+    # return df
+    return df_exploded
 
 
 def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:

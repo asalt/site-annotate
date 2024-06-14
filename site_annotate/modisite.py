@@ -99,7 +99,7 @@ def create_15mer(sequence, position):  # ! position is 1 indexed
     position_padded = int(position_padded)  # attempt to have this guaranteed beforehand
     res = sequence_padded[position_padded - 7 : position_padded + 7 + 1]
     reslist = list(res)
-    reslist[6] = reslist[6].lower()
+    reslist[7] = reslist[7].lower()
     return "".join(reslist)
 
 

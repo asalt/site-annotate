@@ -44,7 +44,7 @@ def test_extract_positions_misc():
 def test_create_15mer():
     sequence = "SGGRRKSASATSSSS"
     position = 1
-    expected_result = "______sGGRRKSAS"
+    expected_result = "_______sGGRRKSA"
     result = modisite.create_15mer(sequence, position)
     assert result == expected_result
 
@@ -52,7 +52,7 @@ def test_create_15mer():
 def test_create_15mer_position_is_float():
     sequence = "SGGRRKSASATSSSS"
     position = 1.0
-    expected_result = "______sGGRRKSAS"
+    expected_result = "_______sGGRRKSA"
     result = modisite.create_15mer(sequence, position)
     assert result == expected_result
 

@@ -239,7 +239,9 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
     finalres = process_results(fullres)
     # finalres is a dict with keys modi ( sty_79_9663, k_42_0106, ... )
     # and values the concatenated dataframe of all sites, along with tmt quant if applicable
-    save_results(finalres, psms[0])
+    # this "not reduced" file can be huge ( 15g + )
+    # save_results(finalres, psms[0])
+    
 
     site_reduced = reduce.reduce_sites(finalres)
     save_results(site_reduced, psms[0], name="site_annotation_reduced")
