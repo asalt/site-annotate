@@ -28,9 +28,17 @@ def _reduce_sites(df):
 
     g = df.groupby(groupby_cols)
     # Summarize by calculating the sum of TMT intensities
-    result1 = g.agg(
-        {col: "sum" for col in df.columns if "TMT_" in col and "intensity" in col}
-    )
+    result1 = None
+    if any("TMT" in x for x in df.columns):
+        _agg_dict = {col: "sum" for col in df.columns if "TMT_" in col and "intensity" in col}
+    # else:
+    #     if 'intensity' not in df.columns:
+    #         logger.error(f"no intensity or TMT intensity columns present")
+    #         return
+    #     _agg_dict = {col: "sum" for col in ('intensity',)}
+        result1 = g.agg(
+            _agg_dict
+        )
     result2 = g.agg(
         {
             "hyperscore": "max",

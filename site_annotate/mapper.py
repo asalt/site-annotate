@@ -146,8 +146,8 @@ def add_annotations(data):
     outdata = {}
     for k, df in data.items():
         if "uniprot_id" not in df.columns:
-            outdata[k] = df
             logger.warning(f"{k} no uniprot id present, skipping")
+            # outdata[k] = df
             continue
         # data[k] = add_uniprot(df)
         psp_info = io_external.get_psiteplus_file(k)

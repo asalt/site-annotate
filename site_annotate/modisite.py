@@ -3,7 +3,7 @@ import re
 import pandas as pd
 from collections import defaultdict
 
-from .constants import VALID_MODI_COLS, MODI_ABBREVS
+from .constants import VALID_MODI_COLS, MODI_ABBREVS, get_all_columns
 from . import log
 
 pd.options.display.max_columns = 99
@@ -436,11 +436,13 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         - ENSP (only protein specific designator supported now)
     """
 
+    
+    target_cols = get_all_columns(df.columns)
+
     sequence = seqinfo["sequence"]
     RESULTS = dict()
-    # import ipdb; ipdb.set_trace()
 
-    for col in VALID_MODI_COLS:
+    for col in target_cols:
         modi_abbrev = MODI_ABBREVS.get(col, "?")
         if col not in df.columns or len(df[~df[col].isna()]) == 0:
             continue

@@ -1,3 +1,5 @@
+import re
+
 VALID_MODI_COLS = [
     "sty_79_9663",
     "k_42_0106",
@@ -20,3 +22,11 @@ MODI_ABBREVS = {
     "sty_79_9663": "p",
     "m_15_9949": "ox",
 }
+
+
+pattern = re.compile(r'[a-z]+_\d+_\d+$')
+def get_all_columns(iterable):
+    matches = [pattern.match(it) for it in iterable] 
+    matches = [ x.group() for x in filter(None, matches) ]
+    return matches
+
