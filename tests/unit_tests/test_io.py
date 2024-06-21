@@ -35,6 +35,15 @@ def mock_fasta_file():
     return StringIO(fasta_content)
 
 
+def test_get_isoform_hierarchy():
+    df = site_annotate.io.get_isoform_hierarchy()
+    assert df is not None
+    assert "gene_id" in df.columns
+    assert "protein_id" in df.columns
+    assert "primary_select" in df.columns
+    assert "secondary_select" in df.columns
+
+
 def test_read_sequence_file_to_dataframe(mock_fasta_file, mocker):
     mocker.patch("builtins.open", return_value=mock_fasta_file)
     df = site_annotate.io.read_sequence_file_to_dataframe("dummy_path.fasta", "fasta")

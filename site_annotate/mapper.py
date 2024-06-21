@@ -156,7 +156,9 @@ def add_annotations(data):
             continue
 
         df["_upper"] = df["fifteenmer"].str.upper()
+        df["uniprot_id"] = df["uniprot_id"].fillna("")
         psp_info["_upper"] = psp_info["site_+_7_aa"].str.upper()
+        psp_info["acc_id"] = psp_info["acc_id"].fillna("")
 
         dfm = df.merge(
             psp_info,

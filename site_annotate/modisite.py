@@ -436,7 +436,6 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         - ENSP (only protein specific designator supported now)
     """
 
-    
     target_cols = get_all_columns(df.columns)
 
     sequence = seqinfo["sequence"]

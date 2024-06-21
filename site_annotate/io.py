@@ -1,13 +1,29 @@
 # io.py
 import re
 import pathlib
+from pathlib import Path
 import pandas as pd
 import janitor
 from Bio import SeqIO
 
 from .utils import data_generator
 
+from . import log
 from .constants import VALID_MODI_COLS
+
+logger = log.get_logger(__file__)
+
+
+def set_data_dir():
+    # Path of the current script
+    current_script_path = Path(__file__).resolve()
+    # Path to the top-level data directory
+    res = current_script_path.parent.parent / "data"
+    logger.debug(f"data dir set to {res}")
+    return res
+
+
+data_dir = set_data_dir()
 
 
 RENAME = {
@@ -30,6 +46,16 @@ RENAME = {
     "sample_17": "TMT_134_C",
     "sample_18": "TMT_135_N",
 }
+
+
+def get_isoform_hierarchy() -> pd.DataFrame:
+    target1 = data_dir / "GENCODE.M32.basic.CHR.protein.selection.mapping.txt"
+    target2 = data_dir / "GENCODE.V42.basic.CHR.isoform.selection.mapping.txt"
+    df1 = pd.read_table(target1, sep="\t", low_memory=False)
+    df2 = pd.read_table(target2, sep="\t", low_memory=False)
+    df = pd.concat([df1, df2])
+    df = janitor.clean_names(df)
+    return df
 
 
 def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:

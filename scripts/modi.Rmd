@@ -1,0 +1,599 @@
+---
+title: "1141-modi"
+author: "MSPC"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    highlight: zenburn
+    toc: yes
+    toc_float: false
+    self_contained: true
+params:
+  data_dir: NULL
+  metadata: NULL
+  modi_abbrev: ac 
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 100% !important;
+  margin: auto;
+}
+</style>
+
+```{r setup, include=T}
+knitr::opts_chunk$set(echo = TRUE)
+suppressPackageStartupMessages(library(rlang))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(magrittr))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(reactable))
+library(dendsort)
+
+
+library(knitr)
+myreactable <- function(x, ...) reactable(x, defaultPageSize = 14, searchable = T, compact = T, ...)
+```
+
+```{r, label=funcs, include=F}
+myzscore <- function(value, minval = NA, remask = TRUE) {
+  mask <- is.na(value)
+  if (is.na(minval)) minval <- min(value, na.rm = TRUE)
+
+  if (minval == Inf) {
+    minval <- 0
+  }
+
+  value[is.na(value)] <- minval
+  # todo make smaller than min val
+  out <- scale(value)
+
+  # if all NA:
+  if (sum(!is.finite(out)) == length(out)) {
+    out[, 1] <- 0
+  }
+
+  if (remask == TRUE) {
+    out[mask] <- NA
+  }
+  return(out)
+}
+
+dist_no_na <- function(mat) {
+  mat[is.na(mat)] <- min(mat, na.rm = TRUE)
+  edist <- dist(mat)
+  return(edist)
+}
+```
+
+
+
+```{r}
+.data_rootdir <- "../data/processed/"
+# (files <- fs::dir_ls(path = .data_rootdir, regexp = "sty_79.*_reduced_mapped.tsv$", recurse = T)) #  only want 42, 43 is carbamylation
+(files <- fs::dir_ls(path = .data_rootdir, regexp = "sty_79_9663_site_annotation_reduced_mapped.tsv", recurse = T)) #  only want 42, 43 is carbamylation
+
+(files2 <- fs::dir_ls(path = .data_rootdir, regexp = ".*k_4[2]_.*_reduced_mapped.tsv$", recurse = T)) #  only want 42, 43 is carbamylation
+# (files <- fs::dir_ls(path = .data_rootdir, regexp = "sty_79.*_reduced_mapped.tsv$", recurse = T)) #  only want 42, 43 is carbamylation
+(files <- c(files, files2))
+```
+
+
+```{r}
+datas <- files %>% purrr::map(~ readr::read_tsv(.x) %>%
+  mutate(id = .x) %>%
+  mutate(modi_id = basename(id) %>% str_extract(pattern = "(sty|k)_[0-9]+_[0-9]+")) %>%
+  mutate(geneid = as.character(geneid)))
+
+data <- bind_rows(datas) # %>% dplyr::filter(!str_detect(protein, "\\|Cont_"))
+
+data %<>% mutate(sitename = if_else(is.na(sitename2), sitename, sitename2))
+data %<>% mutate(ms_lit = replace_na(ms_lit, 0))
+data %<>% mutate(lt_lit = replace_na(lt_lit, 0))
+
+data <- data %>% rename_with(~ str_replace(., "_intensity$", ""), everything())
+```
+
+
+# explore
+
+```{r}
+data %>%
+  group_by(sitename) %>%
+  summarize(n = n()) %>%
+  arrange(-n)
+```
+
+
+
+
+# meta
+```{r}
+meta <- tibble::tribble(
+  ~name, ~runno, ~searchno, ~label, ~recno, ~treat, ~replicate,
+  "X6304", 1, 7, "TMT_126", 53825, "untreated", 1,
+  "X6314", 1, 7, "TMT_127_N", 53825, "untreated", 2,
+  "X6346", 1, 7, "TMT_127_C", 53825, "untreated", 3,
+  "RefMix1", 1, 7, "TMT_128_N", 53825, "NA", 4,
+  "X6321", 1, 7, "TMT_128_C", 53825, "carboplatin", 1,
+  "X6343", 1, 7, "TMT_129_N", 53825, "carboplatin", 2,
+  "X6391", 1, 7, "TMT_129_C", 53825, "carboplatin", 3,
+  "RefMix2", 1, 7, "TMT_130_N", 53825, "NA", 4,
+  "X6349", 1, 7, "TMT_130_C", 53825, "IMT", 1,
+  "X6378", 1, 7, "TMT_131_N", 53825, "IMT", 2,
+  "X6383", 1, 7, "TMT_131_C", 53825, "IMT", 3,
+  "RefMix3", 1, 7, "TMT_132_N", 53825, "NA", 4,
+  # "X6323",  1, 7, "TMT_132_C", 53825, "carboplatin_IMT",1, # this sample is poor quality
+  "X6336", 1, 7, "TMT_133_N", 53825, "carboplatin_IMT", 2,
+  "X6386", 1, 7, "TMT_133_C", 53825, "carboplatin_IMT", 3,
+  "RefMix4", 1, 7, "TMT_134_N", 53825, "NA", 4,
+)
+```
+
+
+
+# 
+```{r}
+datal <- data %>%
+  pivot_longer(
+    cols = starts_with("TMT"), names_to = "label"
+  ) %>%
+  left_join(meta)
+
+datal %<>% dplyr::filter(!is.na(name))
+```
+
+```{r}
+.minval <- datal %>%
+  dplyr::filter(value > 0) %>%
+  pull(value) %>%
+  min()
+datal %<>%
+  group_by(recno, runno, searchno, label, taxon, modi_id) %>%
+  mutate(
+    val_mednorm = (value + (.minval / 2)) / median(value, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    log2_val = log2(val_mednorm)
+  ) %>%
+  group_by(fifteenmer, ENSG, geneid, symbol, taxon) %>%
+  mutate(
+    zscore = myzscore(log2_val)
+  ) %>%
+  filter(!all(is.na(value))) %>% # this will get rid of all nas
+  ungroup()
+
+# datal %>% filter(fifteenmer == "AFLCGVMkTYRQREK", ENSG == "ENSMUSG00000066037", geneid == "74326", symbol == "Hnrnpr", taxon == 10090)
+```
+
+
+```{r}
+datal %>%
+  ggplot(aes(x = log2_val, col = name)) +
+  geom_density() +
+  facet_wrap(~modi_id)
+```
+
+
+
+```{r}
+datal %>%
+  ggplot(aes(x = zscore, col = name)) +
+  geom_density() +
+  facet_wrap(~modi_id)
+```
+
+
+```{r}
+.id_cols <- c("fifteenmer", "ENSG", "ENSP", "geneid", "taxon", "position", "sitename", "id", "modi_id")
+datal %>% dplyr::summarise(n = dplyr::n(), .by = c(fifteenmer, ENSG, ENSP, geneid, taxon, sitename, id, name))
+dataw <- datal %>%
+  pivot_wider(
+    id_cols = any_of(.id_cols),
+    names_from = name,
+    values_fn = function(x) median(x, na.rm = T),
+    values_from = log2_val, # sometimes this happens after merging with phosphositeplus table
+  )
+```
+# limma
+```{r, label='limma'}
+library(limma)
+
+mod <- model.matrix(~ 0 + treat, meta)
+rownames(mod) <- meta$name
+mat <- dataw[, meta$name]
+
+contrasts <- limma::makeContrasts(
+  "treatcarboplatin - treatuntreated",
+  "treatIMT - treatuntreated",
+  "treatcarboplatin_IMT - treatuntreated",
+  "treatcarboplatin_IMT - treatcarboplatin",
+  "treatcarboplatin_IMT - treatIMT",
+  levels = mod
+)
+
+fit <- limma::lmFit(mat, mod)
+fit <- contrasts.fit(fit, contrasts)
+fitres <- fit %>% limma::eBayes(robust = T, trend = T)
+```
+
+
+
+
+```{r}
+toptables <- colnames(contrasts) %>%
+  purrr::map(~ {
+    limma::topTable(fitres, coef = .x, number = Inf, sort.by = "none")
+  }) %>%
+  setNames(nm = colnames(contrasts))
+
+
+toptables2 <- toptables %>% purrr::map(~ {
+  assertthat::are_equal(nrow(.x), nrow(dataw))
+  bind_cols(
+    dataw %>% select(-meta$name),
+    .x
+  )
+})
+
+
+toptables2 %>% purrr::iwalk(~ {
+  .outdir <- file.path("../", "results", "modi")
+  if (!fs::dir_exists(.outdir)) fs::dir_create(.outdir)
+  .outf <- .y %>% str_replace(" - ", "_minus_")
+  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), ".tsv"))
+  cat(paste0("Writing ", .fulloutf))
+  .x %>% write_tsv(.fulloutf)
+})
+```
+
+
+## stat overview
+
+```{r}
+plts <- toptables2 %>%
+  purrr::imap(
+    ~ {
+      plt <- .x %>%
+        ggplot(aes(x = P.Value)) +
+        geom_histogram(binwidth = .05, ) +
+        labs(title = paste0(.y, "\n", "p value dist"))
+      print(plt)
+    }
+  )
+```
+
+
+```{r}
+plts <- toptables2 %>%
+  purrr::imap(
+    ~ {
+      plt <- .x %>%
+        ggplot(aes(x = adj.P.Val)) +
+        geom_histogram(binwidth = .05) +
+        labs(title = paste0(.y, "\n", "adj p value dist"))
+      print(plt)
+    }
+  )
+```
+
+```{r, include=F}
+# to initialize the js dependency
+reactable(mtcars)
+```
+
+
+```{r, results='asis', eval=T}
+._ <- toptables2 %>%
+  purrr::imap(~ {
+    print(paste0("## ", .y))
+    .x %>%
+      arrange(P.Value) %>%
+      select(-id, -AveExpr, -B) %>%
+      select(sitename, everything()) %>%
+      head(40) %>%
+      myreactable(
+        showSortable = T,
+        wrap = F,
+        resizable = TRUE,
+        bordered = TRUE,
+        columns = list(
+          sitename = colDef(sticky = "left", style = list(backgroundColor = "#8af")),
+          `P.Value` = colDef(format = colFormat(digits = 4)),
+          `adj.P.Val` = colDef(format = colFormat(digits = 4)),
+          `logFC` = colDef(format = colFormat(digits = 4)),
+          `t` = colDef(format = colFormat(digits = 4))
+        )
+      ) %>%
+      htmltools::tagList() %>%
+      print()
+  })
+```
+
+
+
+
+
+```{r}
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(circlize))
+```
+
+```{r, fig.width=9, fig.height=12}
+toptables2 %>% purrr::imap(~ {
+  n <- 60
+  .sel <- .x %>%
+    arrange(P.Value) %>%
+    head(n = n)
+  .data <- datal %>%
+    dplyr::filter(sitename %in% .sel$sitename) %>%
+    dplyr::filter(!str_detect(name, "RefMix")) # %>%
+  # mutate(position_absolut = as.character(position_absolut))
+  .id_cols <- c(
+    "fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id", "lt_lit",
+    "ms_lit"
+  )
+  .mat <- .data %>% pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
+  .cids <- intersect(colnames(.mat), meta$name)
+  .meta <- meta %>% dplyr::filter(name %in% .cids)
+
+
+  ca <- ComplexHeatmap::columnAnnotation(
+    treat = .meta$treat,
+    annotation_name_side = "left",
+    col = list(
+      treat = c(
+        untreated = "#1f77b4",
+        carboplatin = "#ff7f0e",
+        IMT = "#2ca02c",
+        carboplatin_IMT = "#d62728"
+      )
+    )
+  )
+
+  #
+  hide_zero <- function(x) {
+    sapply(x, function(y) ifelse(y == 0, "", as.character(y)))
+  }
+
+  row_annotations <- HeatmapAnnotation(
+    lt_lit = .mat$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
+    ms_lit = .mat$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
+    which = "row",
+    gp = gpar(fontsize = 2, size = 2),
+    width = unit(1, "cm"),
+    annotation_name_side = "top",
+    border = T,
+    show_annotation_name = T
+  )
+
+  .ht_mat <- .mat[, .meta$name] %>% as.matrix()
+  ht <- ComplexHeatmap::Heatmap(
+    .ht_mat,
+    column_split = .meta$treat,
+    row_labels = .mat$sitename,
+    row_names_gp = grid::gpar(fontsize = 7),
+    column_names_side = "top",
+    heatmap_legend_param = list(title = "zscore"),
+    column_title = .y,
+    right_annotation = row_annotations,
+    top_annotation = ca,
+    cluster_rows = dendsort(hclust(dist(.ht_mat), method = "ward.D2")),
+    # cluster_columns = dendsort(hclust(dist(t(.ht_mat)), method="ward.D2"))
+    clustering_method_columns = "ward.D2"
+    # clustering_method_rows = "ward.D2",
+    # clustering_method_columns = "ward.D2"
+  )
+
+  .outdir <- file.path("../", "results", "modi")
+  .outf <- .y %>% str_replace(" - ", "_minus_")
+  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top", as.character(n), ".pdf"))
+  draw(ht)
+
+  pdf(.fulloutf, height = 14, width = 11)
+  print(ht)
+  dev.off()
+
+
+  # same thing but only the two comparison
+  .comp <- .y %>%
+    str_extract_all("(?<=treat)[a-zA-Z_]+") %>%
+    unlist()
+  .data2 <- .data %>% dplyr::filter(treat %in% .comp)
+  .id_cols <- c("fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id")
+  .mat2 <- .data2 %>%
+    group_by(!!!rlang::syms(.id_cols)) %>%
+    mutate(zscore = myzscore(log2_val)) %>%
+    ungroup() %>%
+    pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
+  .cids <- intersect(colnames(.mat2), meta$name)
+  .meta <- meta %>% dplyr::filter(name %in% .cids)
+
+
+
+  .ht_mat2 <- .mat2[, .meta$name] %>% as.matrix()
+  .meta2 <- .meta %>%
+    dplyr::filter(name %in% colnames(.mat2)) %>%
+    mutate(name = factor(name, levels = colnames(.mat2), ordered = T)) %>%
+    arrange(name)
+
+  ca <- ComplexHeatmap::columnAnnotation(
+    treat = .meta2$treat,
+    annotation_name_side = "left",
+    col = list(
+      treat = c(
+        untreated = "#1f77b4",
+        carboplatin = "#ff7f0e",
+        IMT = "#2ca02c",
+        carboplatin_IMT = "#d62728"
+      )
+    )
+  )
+
+  row_annotations <- HeatmapAnnotation(
+    lt_lit = .mat$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
+    ms_lit = .mat$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
+    which = "row",
+    gp = gpar(fontsize = 2, size = 2),
+    width = unit(1, "cm"),
+    annotation_name_side = "top",
+    border = T,
+    show_annotation_name = T
+  )
+
+  ht <- ComplexHeatmap::Heatmap(
+    .ht_mat2,
+    column_split = .meta2$treat,
+    # column_split = 3,
+    row_labels = .mat2$sitename,
+    row_names_gp = grid::gpar(fontsize = 8),
+    column_names_side = "top",
+    heatmap_legend_param = list(title = "zscore"),
+    column_title = .y,
+    top_annotation = ca,
+    right_annotation = row_annotations,
+    cluster_rows = dendsort(hclust(dist(.ht_mat2), method = "ward.D2")),
+    # cluster_columns = dendsort(hclust(dist(t(.ht_mat2)), method="ward.D2"))
+    clustering_method_columns = "ward.D2"
+  )
+
+  .outdir <- file.path("../", "results", "modi")
+  .outf <- .y %>% str_replace(" - ", "_minus_")
+  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top", as.character(n), "_subsel", ".pdf"))
+  draw(ht)
+  pdf(.fulloutf, height = 14, width = 8)
+  print(ht)
+  dev.off()
+})
+```
+
+```{r, eval=F}
+# histones <- list(
+#   "HIST1H1A" = "3004",
+#   "HIST1H1B" = "3005",
+#   "HIST1H1C" = "3006",
+#   "HIST1H1D" = "3007",
+#   "HIST1H1E" = "3008",
+#   "HIST1H2AA" = "8334",
+#   "HIST1H2AB" = "8335",
+#   "HIST1H2AC" = "8336",
+#   "HIST1H2AD" = "8337",
+#   "HIST1H2AE" = "8338",
+#   "HIST1H2BA" = "3012",
+#   "HIST1H2BB" = "3020",
+#   "HIST1H2BC" = "8348",
+#   "HIST1H2BD" = "8349",
+#   "HIST1H2BE" = "8350",
+#   "HIST1H3A" = "8351",
+#   "HIST1H3B" = "8352",
+#   "HIST1H3C" = "8353",
+#   "HIST1H3D" = "8354",
+#   "HIST1H3E" = "8355",
+#   "HIST1H4A" = "8358",
+#   "HIST1H4B" = "8360",
+#   "HIST1H4C" = "8361",
+#   "HIST1H4D" = "8362",
+#   "HIST1H4E" = "8363",
+#   "Hist1h1a" = "15089",
+#   "Hist1h1b" = "15090",
+#   "Hist1h1c" = "15091",
+#   "Hist1h1d" = "15092",
+#   "Hist1h1e" = "15093",
+#   "Hist1h2aa" = "319165",
+#   "Hist1h2ab" = "15094",
+#   "Hist1h2ac" = "15095",
+#   "Hist1h2ad" = "15096",
+#   "Hist1h2ae" = "15097",
+#   "Hist1h2ba" = "15107",
+#   "Hist1h2bb" = "15108",
+#   "Hist1h2bc" = "15109",
+#   "Hist1h2bd" = "15110",
+#   "Hist1h2be" = "15111",
+#   "Hist1h3a" = "319160",
+#   "Hist1h3b" = "319161",
+#   "Hist1h3c" = "319162",
+#   "Hist1h3d" = "319163",
+#   "Hist1h3e" = "319164",
+#   "Hist1h4a" = "15119",
+#   "Hist1h4b" = "15120",
+#   "Hist1h4c" = "15121",
+#   "Hist1h4d" = "15122",
+#   "Hist1h4e" = "15123"
+# )
+
+# .sel <- datal %>% distinct(geneid, .keep_all = T) %>% filter(geneid%in%histones)
+.sel <- datal %>% filter(str_detect(symbol, "STAT1"))
+# .sel <- datal %>% filter(str_detect(symbol, "Stat" )) there's no mouse stat1 present
+.data <- datal %>%
+  dplyr::filter(sitename %in% .sel$sitename) %>%
+  dplyr::filter(!str_detect(name, "RefMix")) # %>%
+# mutate(position_absolut = as.character(position_absolut))
+.id_cols <- c(
+  "fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id", "lt_lit",
+  "ms_lit"
+)
+.mat <- .data %>% pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
+.cids <- intersect(colnames(.mat), meta$name)
+.meta <- meta %>% dplyr::filter(name %in% .cids)
+
+ca <- ComplexHeatmap::columnAnnotation(
+  treat = .meta$treat,
+  annotation_name_side = "left",
+  col = list(
+    treat = c(
+      untreated = "#1f77b4",
+      carboplatin = "#ff7f0e",
+      IMT = "#2ca02c",
+      carboplatin_IMT = "#d62728"
+    )
+  )
+)
+
+#
+hide_zero <- function(x) {
+  sapply(x, function(y) ifelse(y == 0, "", as.character(y)))
+}
+
+row_annotations <- HeatmapAnnotation(
+  lt_lit = .mat$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
+  ms_lit = .mat$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
+  which = "row",
+  gp = gpar(fontsize = 2, size = 2),
+  width = unit(1, "cm"),
+  annotation_name_side = "top",
+  border = T,
+  show_annotation_name = T
+)
+
+.ht_mat <- .mat[, .meta$name] %>% as.matrix()
+ht <- ComplexHeatmap::Heatmap(
+  .ht_mat,
+  column_split = .meta$treat,
+  row_labels = .mat$sitename,
+  row_names_gp = grid::gpar(fontsize = 7),
+  column_names_side = "top",
+  heatmap_legend_param = list(title = "zscore"),
+  column_title = .y,
+  right_annotation = row_annotations,
+  top_annotation = ca,
+  cluster_rows = dendsort(hclust(dist(.ht_mat), method = "ward.D2")),
+  # cluster_columns = dendsort(hclust(dist(t(.ht_mat)), method="ward.D2"))
+  clustering_method_columns = "ward.D2"
+  # clustering_method_rows = "ward.D2",
+  # clustering_method_columns = "ward.D2"
+)
+
+.outdir <- file.path("../", "results", "modi")
+.outf <- "stat1"
+.fulloutf <- file.path(.outdir, paste0(make.names(.outf), ".pdf"))
+draw(ht)
+
+pdf(.fulloutf, height = 7, width = 13)
+print(ht)
+dev.off()
+```
+

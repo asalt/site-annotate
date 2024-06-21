@@ -20,7 +20,7 @@ from . import io
 from . import io_external
 from . import modisite
 from .utils import data_generator
-from .constants import VALID_MODI_COLS
+from .constants import VALID_MODI_COLS, get_all_columns
 from .runner import run_pipeline
 from . import mapper
 from . import reduce
@@ -236,14 +236,16 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
     #     'TMT_130_N_intensity', 'TMT_130_C_intensity', 'TMT_131_N_intensity', 'TMT_131_C_intensity', 'TMT_132_N_intensity',
     #     'TMT_132_C_intensity', 'TMT_133_N_intensity', 'TMT_133_C_intensity', 'TMT_134_N_intensity', 'highest_prob'],
     #     dtype='object')
-    finalres = process_results(fullres)
+    finalres = process_results(fullres, decoy_label="rev_")
     # finalres is a dict with keys modi ( sty_79_9663, k_42_0106, ... )
     # and values the concatenated dataframe of all sites, along with tmt quant if applicable
     # this "not reduced" file can be huge ( 15g + )
     # save_results(finalres, psms[0])
-    
 
-    site_reduced = reduce.reduce_sites(finalres)
+    site_reduced = reduce.reduce_sites(
+        finalres,
+        decoy_label="rev_",
+    )
     save_results(site_reduced, psms[0], name="site_annotation_reduced")
 
     site_reduced_mapped = mapper.add_annotations(site_reduced)
@@ -303,15 +305,26 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     return df, fasta_data, fa_psp_ref  #
 
 
-def process_results(fullres):
+def process_results(fullres, decoy_label="rev_"):
+    """
+    fullres is a list of dicts
+    """
     finalres = {}
-    for col in VALID_MODI_COLS:
-        frames = [items.get(col) for items in fullres if items.get(col) is not None]
-        if frames:
-            finalres[col] = pd.concat(frames, ignore_index=True)
-        else:
-            pass  # not all need to be present
-            # logger.warning(f"No results returned for {col}")
+    all_frames = defaultdict(list)
+    for result_dict in fullres:
+        for modi_id, df in result_dict.items():
+            all_frames[modi_id].append(df)
+        # for col in VALID_MODI_COLS:
+        #     frames = [items.get(col) for items in fullres if items.get(col) is not None]
+        # if frames:
+        #     finalres[col] = pd.concat(frames, ignore_index=True)
+        # else:
+        #     pass  # not all need to be present
+        # logger.warning(f"No results returned for {col}")
+    for k, v in all_frames.items():
+        _df = pd.concat(v)  # filter decoys here
+        _df = _df[~_df.protein.str.startswith(decoy_label)]
+        finalres[k] = _df
     return finalres
 
 
