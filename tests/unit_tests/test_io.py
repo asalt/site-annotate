@@ -108,7 +108,7 @@ def test_explode_mapped_proteins_testdata():
     )
 
     df_new = site_annotate.io.prepare_psm_file(df)
-    assert all(df_new.protein == df_new.mapped_proteins)
+    assert all(df_new.protein == df_new.mapped_proteins2)
 
     query = df[["spectrum", "peptide", "modified_peptide", "protein"]].value_counts()
 
@@ -116,7 +116,11 @@ def test_explode_mapped_proteins_testdata():
 
 
 def test_explode_mapped_proteins_realdata():
-    f = "../testdata/test_isoforms_tcf12.tsv"  # the names have already been cleaned with janitor
+
+    f = (
+        Path(__file__).absolute().parent.parent / "testdata/test_isoforms_tcf12.tsv"
+    )  # the names have already been cleaned with janitor
+
     df = pd.read_csv(f, sep="\t")
     df = site_annotate.io.prepare_psm_file(df)
 

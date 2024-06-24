@@ -61,7 +61,9 @@ def get_isoform_hierarchy() -> pd.DataFrame:
 
 
 def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
-    """Check if a DataFrame is a valid PSM file."""
+    """Check if a DataFrame is a valid PSM file.
+    this makes use of the proteins and mapped_proteins columns in msfragger output
+    """
     # Check if a DataFrame is a valid PSM file
     required_cols = ["peptide", "intensity"]
     for required_col in required_cols:
@@ -70,20 +72,20 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
 
     # if not any(df.columns.str.startswith("TMT")):
     df = df.rename(columns=RENAME)
-    df["mapped_proteins"] = df["protein"] + ", " + df["mapped_proteins"].fillna("")
-    df["mapped_proteins"] = df["mapped_proteins"].apply(
-        lambda x: x.split(", ") if x else []
+    df["mapped_proteins"] = (
+        df["protein"] + ", " + df["mapped_proteins"].fillna("")
+    )  # mapped_proteins column does not contain the value in the protein column so we add it here
+    df["mapped_proteins2"] = df["mapped_proteins"].apply(
+        lambda x: x.split(", ") if isinstance(x, str) else []
     )
-    df["mapped_proteins"] = df["mapped_proteins"].apply(
+    df["mapped_proteins2"] = df["mapped_proteins2"].apply(
         lambda x: list(filter(None, set(x)))
     )
 
     # # Step 2: Explode the 'mapped_proteins' column
-    df_exploded = df.explode("mapped_proteins")
+    df_exploded = df.explode("mapped_proteins2")
     df_exploded = df_exploded.reset_index(drop=True)
-    df_exploded["protein"] = df_exploded["mapped_proteins"]
-    # import ipdb
-    # ipdb.set_trace()
+    df_exploded["protein"] = df_exploded["mapped_proteins2"]
 
     # return df
     return df_exploded
@@ -94,6 +96,7 @@ def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:
     # Read a PSM file into a DataFrame
     df = pd.read_csv(psm_file, sep="\t")
     df = janitor.clean_names(df)
+    # df = df[df.protein.str.contains("Tcf12")]
     df = prepare_psm_file(df)
     validate_psm_file(df)
     return df

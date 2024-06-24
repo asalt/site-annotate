@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 from site_annotate import modisite
 import site_annotate.io
@@ -18,10 +20,13 @@ from site_annotate import modisite
 
 def test_explode_mapped_proteins_realdata():
 
-    fa = "../testdata/test_isoforms_tcf12.fa"
+    f = (
+        Path(__file__).absolute().parent.parent / "testdata/test_isoforms_tcf12.tsv"
+    )  # the names have already been cleaned with janitor
+    fa = Path(__file__).absolute().parent.parent / "testdata/test_isoforms_tcf12.fa"
+
     fa_fx = Fasta(fa)
 
-    f = "../testdata/test_isoforms_tcf12.tsv"  # the names have already been cleaned with janitor
     df = pd.read_csv(f, sep="\t")
     df = site_annotate.io.prepare_psm_file(df)
 
@@ -33,6 +38,7 @@ def test_explode_mapped_proteins_realdata():
         ["spectrum", "peptide", "modified_peptide", "protein", "position_absolut"]
     ].value_counts()
 
+    # "AGGQAPSSPSYENSLHSLQSR"
     assert (query == 1).all()
 
 

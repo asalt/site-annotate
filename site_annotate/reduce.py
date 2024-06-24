@@ -4,6 +4,9 @@ import re
 from tokenize import group
 import pandas as pd
 from collections import defaultdict
+
+import numpy as np
+
 from tqdm import tqdm
 
 from .constants import VALID_MODI_COLS
@@ -11,6 +14,9 @@ from . import log
 from . import io
 
 logger = log.get_logger(__file__)
+
+
+tmt_pat = re.compile(r"TMT_(\d+)_intensity")
 
 
 def make_nr(df_reduced) -> pd.DataFrame:
@@ -27,6 +33,9 @@ def make_nr(df_reduced) -> pd.DataFrame:
         how="left",
     )
 
+    if df_reduced.shape[0] != df.shape[0]:
+        logger.error("merge failed, created more rows than started with")
+
     id_cols = [
         "fifteenmer",
         "ENSG",
@@ -38,9 +47,9 @@ def make_nr(df_reduced) -> pd.DataFrame:
     def condense_group(group, idxs, df, id_cols=id_cols):
         # idx = [0, 1]
         sel = df.loc[idxs]
-        sel["Protein"] = sel["Protein"].fillna("")
-        proteins = str.join(", ", map(str, sel["Protein"].tolist()))
-        aapos_list = str.join(", ", map(str, set(sel["AApos"].tolist())))
+        sel["protein"] = sel["protein"].fillna("")
+        proteins = str.join(", ", map(str, sel["protein"].tolist()))
+        aapos_list = str.join(", ", map(str, set(sel["position_absolut"].tolist())))
 
         try:
             primarysel = (
@@ -49,7 +58,7 @@ def make_nr(df_reduced) -> pd.DataFrame:
                     (
                         sel.apply(
                             lambda x: (
-                                x["Protein"] if x["Primary_select"] == "Yes" else ""
+                                x["protein"] if x["primary_select"] == "Yes" else ""
                             ),
                             axis=1,
                         )
@@ -66,7 +75,7 @@ def make_nr(df_reduced) -> pd.DataFrame:
                 (
                     sel.apply(
                         lambda x: (
-                            x["Protein"] if x["Secondary_select"] == "Yes" else ""
+                            x["protein"] if x["secondary_select"] == "Yes" else ""
                         ),
                         axis=1,
                     )
@@ -154,6 +163,7 @@ def _reduce_sites(df):
         "protein",
         "uniprot_id",
         "ENSP",
+        "mapped_proteins",
     ]
 
     # Group by 'fifteenmer' and other common columns
@@ -162,10 +172,29 @@ def _reduce_sites(df):
         "sitename",
     ] + [x for x in common_cols if x in df.columns]
 
+    agg_dict2 = {
+        "hyperscore": "max",
+        "rtscore": "max",
+        "delta_mass": "min",
+        "highest_prob": "max",
+        "spectrum": lambda x: "|".join(x),
+    }
+    _missing = [x for x in agg_dict2.keys() if x not in df.columns]
+    for _m in _missing:
+        logger.warning(f"column {_m} not found in df")
+        if _m == "spectrum":
+            df[_m] = ""
+        else:
+            df[_m] = np.nan
+
+    if "intensity" not in df.columns:
+        df["intensity"] = np.nan
+
     g = df.groupby(groupby_cols)
     # Summarize by calculating the sum of TMT intensities
+    # agg1
     result1 = None
-    if any("TMT" in x for x in df.columns):
+    if any([tmt_pat.match(col) for col in df.columns]):
         _agg_dict = {
             col: "sum" for col in df.columns if "TMT_" in col and "intensity" in col
         }
@@ -175,20 +204,21 @@ def _reduce_sites(df):
         #         return
         #     _agg_dict = {col: "sum" for col in ('intensity',)}
         result1 = g.agg(_agg_dict)
-    result2 = g.agg(
-        {
-            "hyperscore": "max",
-            "rtscore": "max",
-            "delta_mass": "min",
-            "highest_prob": "max",
-        }
-    ).rename(
+
+    # agg 2
+
+    result2 = g.agg(agg_dict2).rename(
         columns={
             k: f"{k}_best"
             for k in ["hyperscore", "rtscore", "delta_mass", "highest_prob"]
         }
     )
+    result2 = result2.rename(columns={"spectrum": "spectra"})
+    result2_1 = g.agg({"spectrum": lambda x: len(set(x))})
+    result2_1 = result2_1.rename(columns={"spectrum": "nspectra"})
+    result2 = result2.join(result2_1)
 
+    # agg 3
     result3 = g.agg({"intensity": ["sum", "max"]})
     result3.columns = ["_".join(col).strip() for col in result3.columns.values]
 
