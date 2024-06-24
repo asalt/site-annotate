@@ -1,6 +1,6 @@
 # tests/test_io.py
 import os
-import pytest
+import pandas as pd
 from io import StringIO
 from pathlib import Path
 import pytest
@@ -91,3 +91,15 @@ def test_read_fasta_testdata():
     assert "sequence" in df.columns
     assert "ENSP" in df.columns
     assert "geneid" in df.columns
+
+
+def test_explode_mapped_proteins():
+    f = "../testdata/test_isoforms_tcf12.tsv"  # the names have already been cleaned with janitor
+    df = pd.read_csv(f, sep="\t")
+    df = site_annotate.io.prepare_psm_file(df)
+
+    query = df[["spectrum", "peptide", "modified_peptide", "protein"]].value_counts()
+    assert all(query == 1)
+    # assert all(
+    #     df[["spectrum", "peptide", "modified_peptide", "protein"]].value_counts() == 1
+    # )

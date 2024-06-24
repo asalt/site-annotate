@@ -51,7 +51,9 @@ RENAME = {
 def get_isoform_hierarchy() -> pd.DataFrame:
     target1 = data_dir / "GENCODE.M32.basic.CHR.protein.selection.mapping.txt"
     target2 = data_dir / "GENCODE.V42.basic.CHR.isoform.selection.mapping.txt"
+    logger.info(f"Reading {target1}")
     df1 = pd.read_table(target1, sep="\t", low_memory=False)
+    logger.info(f"Reading {target2}")
     df2 = pd.read_table(target2, sep="\t", low_memory=False)
     df = pd.concat([df1, df2])
     df = janitor.clean_names(df)
@@ -68,14 +70,18 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
 
     # if not any(df.columns.str.startswith("TMT")):
     df = df.rename(columns=RENAME)
-    df["mapped_proteins"] = df["protein"] + "," + df["mapped_proteins"].fillna("")
+    df["mapped_proteins"] = df["protein"] + ", " + df["mapped_proteins"].fillna("")
     df["mapped_proteins"] = df["mapped_proteins"].apply(
-        lambda x: x.split(",") if x else []
+        lambda x: x.split(", ") if x else []
+    )
+    df["mapped_proteins"] = df["mapped_proteins"].apply(
+        lambda x: list(filter(None, set(x)))
     )
 
     # # Step 2: Explode the 'mapped_proteins' column
     df_exploded = df.explode("mapped_proteins")
     df_exploded = df_exploded.reset_index(drop=True)
+    df_exploded["protein"] = df_exploded["mapped_proteins"]
     # import ipdb
     # ipdb.set_trace()
 
@@ -90,7 +96,6 @@ def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:
     df = janitor.clean_names(df)
     df = prepare_psm_file(df)
     validate_psm_file(df)
-    # breakpoint()
     return df
 
 
@@ -129,7 +134,7 @@ def extract_info_from_header(header: str):
     result = {key: value for key, value in matches}
     filtered_result = {key: result[key] for key in result if key in VALID_NAMES}
     return filtered_result
-    return result
+    # return result
 
 
 def read_fasta(file_path):
@@ -163,6 +168,9 @@ def validate_psm_file(df):
 
     if "protein_start" not in df.columns:
         raise ValueError(f"expected `protein_start` in input file")
+
+    if "spectrum_file" not in df.columns:
+        raise ValueError(f"expected `spectrum_file` in input file")
 
     return True
     # if 'peptide' not in
