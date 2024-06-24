@@ -93,7 +93,29 @@ def test_read_fasta_testdata():
     assert "geneid" in df.columns
 
 
-def test_explode_mapped_proteins():
+def test_explode_mapped_proteins_testdata():
+    """ """
+
+    df = pd.DataFrame(
+        {
+            "spectrum": ["s1", "s2", "s3"],
+            "peptide": ["p1", "p2", "p3"],
+            "modified_peptide": ["p1", "p2", "p3"],
+            "protein": ["P1", "P2", "P3"],
+            "mapped_proteins": ["P1, P2", "P2", "P3"],
+            "intensity": [1, 2, 3],
+        }
+    )
+
+    df_new = site_annotate.io.prepare_psm_file(df)
+    assert all(df_new.protein == df_new.mapped_proteins)
+
+    query = df[["spectrum", "peptide", "modified_peptide", "protein"]].value_counts()
+
+    assert all(query == 1)
+
+
+def test_explode_mapped_proteins_realdata():
     f = "../testdata/test_isoforms_tcf12.tsv"  # the names have already been cleaned with janitor
     df = pd.read_csv(f, sep="\t")
     df = site_annotate.io.prepare_psm_file(df)

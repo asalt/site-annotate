@@ -1,7 +1,39 @@
 import pandas as pd
 from site_annotate import modisite
+import site_annotate.io
 from site_annotate.modisite import reset_inner_index
 from pytest import approx
+
+from pyfaidx import Fasta
+
+import site_annotate.runner as runner  # runner calls modisite
+from site_annotate import modisite
+
+# def test_explode_mapped_proteins_realdata():
+#     from pyfaidx import Fasta
+#     f = "../testdata/test_isoforms_tcf12.tsv"  # the names have already been cleaned with janitor
+#     df = pd.read_csv(f, sep="\t")
+#     df = site_annotate.io.prepare_psm_file(df)
+
+
+def test_explode_mapped_proteins_realdata():
+
+    fa = "../testdata/test_isoforms_tcf12.fa"
+    fa_fx = Fasta(fa)
+
+    f = "../testdata/test_isoforms_tcf12.tsv"  # the names have already been cleaned with janitor
+    df = pd.read_csv(f, sep="\t")
+    df = site_annotate.io.prepare_psm_file(df)
+
+    res = runner.run_pipeline(df, fa_fx, cores=1)  # this uses modisite funcs
+    resl = [x["sty_79_9663"] for x in res]
+    dfl = pd.concat(resl)
+
+    query = dfl[
+        ["spectrum", "peptide", "modified_peptide", "protein", "position_absolut"]
+    ].value_counts()
+
+    assert (query == 1).all()
 
 
 def test_extract_positions_empty():
