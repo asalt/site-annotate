@@ -1,4 +1,7 @@
 import sys
+import os
+import re
+import glob
 import subprocess
 import functools
 import logging
@@ -51,7 +54,8 @@ REPORT_TEMPLATES = get_templates(TEMPLATE_PATH)
 
 
 @main.command()
-def show_templates():
+@click.option("-e", "--extended", is_flag=True, default=False, show_default=True, help="print extended info about templates")
+def show_templates(extended):
     for k, v in REPORT_TEMPLATES.items():
         print(k, v)
 
@@ -99,6 +103,124 @@ def common_options(f):
 # )
 # @click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))
 
+def get_reader(file:str ):
+    if file.endswith('.tsv'):
+        return pd.read_table
+    elif file.endswith('.csv'):
+        return pd.read_csv
+    elif file.endswith('.xlsx'):
+        return pd.read_excel
+    else:
+        logger.error(f"do not know how to read file")
+        return None
+
+def convert_tmt_label(shorthand):
+    # Normalize the input by removing 'TMT' or 'TMT_' if present
+    normalized_input = re.sub(r"TMT[_]?", "", shorthand)
+
+    # Conditional cases equivalent to R's case_when
+    if normalized_input == "126":
+        return "TMT_126"
+    elif normalized_input == "131":
+        return "TMT_131_N"
+    elif normalized_input == "134":
+        return "TMT_134_N"
+    elif re.search(r"N$", normalized_input):
+        return re.sub(r"(\d+)_?(N)", r"TMT_\1_N", normalized_input)
+    elif re.search(r"C$", normalized_input):
+        return re.sub(r"(\d+)_?(C)", r"TMT_\1_C", normalized_input)
+    else:
+        return f"TMT_{normalized_input}"
+
+
+def validate_metadata(df: pd.DataFrame):
+    if "recno" not in df.columns:
+        logger.error(f"recno not present in metadata file")
+        raise ValueError(f"recno not present in metadata file")
+    if "runno"  not in df.columns: # assume 1
+        logger.info("runno not found, assuming 1")
+        df['runno'] = 1
+    if "searchno"  not in df.columns: # assume 1
+        logger.info("searchno not found, assuming 7")
+        df['searchno'] = 7
+
+    for x in ("recno", "runno", "searchno"):
+        df[x] = df[x].astype(str)
+
+    df['rec_run_search'] = df.apply(lambda x: f"{x.recno}_{x.runno}_{x.searchno}", axis=1)
+
+    if "label" in df.columns:
+        df["label"] = df["label"].apply(convert_tmt_label)
+        # can add a check here to assert unique by label and rec_run_search
+
+    return(df)
+
+def find_expr_file(rec_run_search:str , data_dir):
+    search_pattern = os.path.join(data_dir, f"{rec_run_search}*reduced*tsv")
+    results = glob.glob(search_pattern)
+    if len(results) == 0:
+        logger.warning(f"no files found for {rec_run_search} in {data_dir}")
+    if len(results) > 1:
+        logger.warning(f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}")
+    if len(results) == 1:
+        return results[0]
+
+def find_expr_files(rec_run_searches, data_dir):
+    return { rrs: find_expr_file(rrs, data_dir) for rrs in rec_run_searches }
+
+def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
+    for (rrs, expr_file) in rec_run_searches.items():
+        rec, run, search = rrs.split("_")
+
+        _meta = meta_df[
+                (
+                    (meta_df.recno == rec) &
+                    (meta_df.runno == run) & 
+                    (meta_df.searchno == search)
+                )]
+        meta_df.loc[_meta.index, "expr_col"] = None
+        meta_df.loc[_meta.index, "expr_file"] = expr_file
+        _df = pd.read_table(expr_file, nrows=5)
+
+        if "intensity_sum" not in _df.columns:
+            raise ValueError(f"`intensity_sum` not found in {expr_file}")
+
+        if "label" in _meta.columns:
+            for label in _meta['label'].tolist():
+                label_mapping = [ x for x in _df.columns if x.startswith(label) ]
+                if len(label_mapping) == 0:
+                    logger.warning(f"could not find sample with label {label}")
+                    next
+                if len(label_mapping) > 1:
+                    logger.warning(f"too many results for {label}")
+                    next
+                if len(label_mapping) == 1:
+                    expr_col = label_mapping[0]
+
+                ix = meta_df[(meta_df['rec_run_search'] == rrs) & (meta_df['label'] == label)].index[0]
+                meta_df.loc[ix, "expr_col"] = expr_col
+                meta_df.loc[ix, "expr_file"] = expr_file
+        else:
+            expr_col = "intensity_sum"
+            meta_df.loc[_meta.index, "expr_col"] = "intensity_sum"
+        return meta_df
+
+
+def validate_meta(metadata_file: pathlib.Path, data_dir: pathlib.Path):
+
+    reader = get_reader(str(metadata_file))
+    meta_df = reader(metadata_file) 
+    meta_df = validate_metadata(meta_df) # or .pipe
+
+    rec_run_searches = meta_df.rec_run_search.unique()
+    expr_data = find_expr_files(rec_run_searches, data_dir)
+    expr_data = { k:v for (k,v) in expr_data.items() if v != None }
+    if len(expr_data) == 0: # no data
+        return
+
+    meta_df_final = validate_expr_files(expr_data, meta_df)
+    return meta_df_final
+
 
 @main.command()
 @common_options
@@ -107,7 +229,7 @@ def common_options(f):
     "--template",
     type=click.Choice(REPORT_TEMPLATES.keys()),
     required=False,
-    default="site_annotate_post_not_reduced",
+    default="modi",
     show_default=True,
 )
 def report(template, data_dir, output_dir, metadata, **kwargs):
@@ -115,14 +237,23 @@ def report(template, data_dir, output_dir, metadata, **kwargs):
     template_file = REPORT_TEMPLATES[template]
 
     data_dir = pathlib.Path(data_dir).absolute()
+    metadata = pathlib.Path(metadata).absolute()
     if output_dir is None:
         output_dir = data_dir
+
+    # now we check if metadata is aligned with available experimental data
+    # == move all of this to a separate function
+    meta_validated = validate_meta(metadata, data_dir)
+    meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
+    meta_validated.to_csv(meta_validated_fname, sep='\t', index=False)
+    logger.info(f"wrote {meta_validated_fname}")
+    #
 
     # Create a dictionary with all parameters
     params_dict = {
         "data_dir": str(data_dir),
         # "output_dir": str(output_dir),
-        "metadata": str(metadata),
+        "metadata": str(meta_validated_fname),
     }
     for k, v in kwargs.items():
         params_dict[k] = v
@@ -142,6 +273,8 @@ def report(template, data_dir, output_dir, metadata, **kwargs):
     subprocess.run(cmd)
 
 
+# we are not using this
+# can probably remove
 @main.command()
 @click.option(
     "-o",
@@ -213,6 +346,9 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
     if not psms:
         logger.warning("Warning: No PSM files provided.")
         return
+    if len(psms) > 1:
+        logger.error("more than 1 psms not supported yet")
+        raise NotImplementedError("more than 1 psms not supported yet")
 
     df, fasta_data, fa_psp_ref = load_and_validate_files(psms[0], fasta, uniprot_check)
     fullres = run_pipeline(df, fasta_data, fa_psp_ref, cores)
@@ -246,6 +382,7 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
         finalres,
         decoy_label="rev_",
     )
+
     save_results(site_reduced, psms[0], name="site_annotation_reduced")
 
     site_reduced_mapped = mapper.add_annotations(site_reduced)
