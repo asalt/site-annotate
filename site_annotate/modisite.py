@@ -93,13 +93,18 @@ def position_dict_to_df(position_dict):
 
 
 def create_15mer(sequence, position):  # ! position is 1 indexed
+    if pd.isna(position):
+        return
     position = position - 1
     sequence_padded = "_" * 7 + sequence + "_" * 7
     position_padded = position + 7
     position_padded = int(position_padded)  # attempt to have this guaranteed beforehand
     res = sequence_padded[position_padded - 7 : position_padded + 7 + 1]
     reslist = list(res)
-    reslist[7] = reslist[7].lower()
+    try:
+        reslist[7] = reslist[7].lower()
+    except IndexError:
+        1+1
     return "".join(reslist)
 
 
@@ -167,11 +172,14 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
     df_positions["protein_start"] = df_positions.apply(
         lambda x: orig_sequence.find(x["peptide"]) + 1, axis=1
     )
+
     df_positions["position_absolut"] = (
-        df_positions["position_relative"] + df_positions["position_start"] - 1
+        df_positions["position_relative"] + df_positions["position_start"] - 1  # keep it 1 indexed, 
     )
 
     # pos = psp_sequence.find(x["peptide"])
+    df_positions.loc[df_positions.position_start == 0, "position_start"] = pd.NA
+    df_positions.loc[df_positions.protein_start == 0, "position_start"] = pd.NA
 
     if "psp" in seqinfo:
         # if seqinfo['psp']['name'] == 'Q9Z2I9':
@@ -187,9 +195,13 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
         df_positions["position_absolut_psp"] = (
             df_positions["position_start_psp"] + df_positions["position_relative"] - 1
         )
-        df_positions["all_possible_positions_psp"] = "|".join(
-            map(str, df_positions.position_absolut_psp.tolist())
-        )
+        _all = df_positions.groupby('peptide').apply(lambda x: '|'.join(sorted(map(str, set(x['position_absolut_psp'])) )), include_groups=False).to_frame("all_possible_positions_psp").reset_index()
+        df_positions = df_positions.merge(_all, how='left')
+
+        # df_positions["all_possible_positions_psp"] = "|".join(
+        #     map(str, df_positions.position_absolut_psp.tolist())
+        # )
+
         # minus 1 because e.g.:
         # position_relative == 1
         # position_start = 500
@@ -202,9 +214,24 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
         # if orig_sequence != psp_sequence:
         #     import ipdb; ipdb.set_trace()
         #     1+1
-    df_positions["all_possible_positions"] = "|".join(
-        map(str, df_positions.position_absolut.tolist())
-    )
+        df_positions.loc[df_positions.position_start_psp == 0, "position_start"] = pd.NA
+        df_positions.loc[df_positions.protein_start_psp == 0, "position_start"] = pd.NA
+
+    # df_positions["all_possible_positions"] = "|".join(
+    #     map(str, df_positions.position_absolut.tolist())
+    # )
+
+
+    _all = df_positions.groupby('peptide').apply(lambda x: '|'.join(sorted(map(str, set(x['position_absolut'])) )), include_groups=False).to_frame("all_possible_positions").reset_index()
+    df_positions = df_positions.merge(_all, how='left')
+
+    if "protein_start_psp" in df_positions:
+        df_positions = df_positions[(
+            (df_positions.protein_start != 0) | # -1 not found
+            (df_positions.protein_start_psp != 0) )]
+    else:
+        df_positions = df_positions[( (df_positions.protein_start != 0) ) ]
+
     return df_positions
 
 
@@ -446,10 +473,19 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         if col not in df.columns or len(df[~df[col].isna()]) == 0:
             continue
 
+        # if len(df[ df.mapped_proteins.str.contains("ENSP00000246785") ]) > 0:
+        #     import ipdb; ipdb.set_trace()
+        #     1+1
+
         res_df = extract_and_transform_data(df, col)
         df_positions = enhance_dataframe(res_df, df, seqinfo)
+        if len(df_positions) == 0: # can happen different protein isoforms..?
+            continue
+
         df_positions["modi_abbrev"] = modi_abbrev
+
         df_positions = compute_additional_attributes(df_positions, sequence)
+
 
         if isobaric:
             df_positions = quant_isobaric_site(df_positions)
@@ -457,6 +493,5 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         df_positions_filtered = process_probability_and_filter(df_positions, col)
         df_positions_filtered = reorder_nice(df_positions_filtered)
         RESULTS[col] = df_positions_filtered
-        # import ipdb; ipdb.set_trace()
 
     return RESULTS

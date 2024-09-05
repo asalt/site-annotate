@@ -163,7 +163,7 @@ def _reduce_sites(df):
         "protein",
         "uniprot_id",
         "ENSP",
-        "mapped_proteins",
+        #"mapped_proteins",
     ]
 
     # Group by 'fifteenmer' and other common columns

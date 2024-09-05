@@ -37,9 +37,6 @@ def process_frame(key_frame, fa, fa_psp_ref=None):
         if isinstance(_uniprot_id, list) and len(_uniprot_id) > 1:
             raise ValueError("need to pick uniprot id earlier")
             # _uniprot_id = _uniprot_id[0]
-            import ipdb
-
-            ipdb.set_trace()
         #     _final_rec, _len = None, 0
         #     for _id in _uniprot_id:
         #         _rec = fa_psp_ref[_id]
@@ -90,6 +87,8 @@ def run_pipeline(
 
     # import ipdb; ipdb.set_trace()
     modis_for_processing = set(df.columns) & set(VALID_MODI_COLS)
+    # if "m_15_9949" in modis_for_processing:
+    #     modis_for_processing.remove("m_15_9949")
 
     g = df.groupby("protein")
     fullres = list()
@@ -99,7 +98,7 @@ def run_pipeline(
             res = process_frame(item, fa, fa_psp_ref)
             fullres.append(res)
 
-    if cores > 1:
+    if cores > 1: # this is much slower too much tme copying data to workers, need to batch it better
         with ThreadPoolExecutor() as executor:
             futures = {
                 executor.submit(process_frame, item, fa, fa_psp_ref): item for item in g

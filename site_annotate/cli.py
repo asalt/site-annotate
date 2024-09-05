@@ -439,6 +439,8 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     if uniprot_check:
         df = mapper.add_uniprot(df)
 
+    # df = df[ df.mapped_proteins.str.contains("ENSP00000359491") ]
+        #"ENSP00000246785") ]
     return df, fasta_data, fa_psp_ref  #
 
 

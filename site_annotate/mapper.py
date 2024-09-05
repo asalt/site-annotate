@@ -159,15 +159,19 @@ def add_annotations(data):
         df["uniprot_id"] = df["uniprot_id"].fillna("")
         psp_info["_upper"] = psp_info["site_+_7_aa"].str.upper()
         psp_info["acc_id"] = psp_info["acc_id"].fillna("")
+        psp_info["psp_position"] = psp_info["mod_rsd"].str.extract(r"(\d+)")
+        psp_info["psp_position"] = psp_info["psp_position"].astype(int)
 
         dfm = df.merge(
             psp_info,
-            left_on=["uniprot_id", "_upper"],
-            right_on=["acc_id", "_upper"],
+            left_on=["uniprot_id", "_upper", "position_absolut_psp"],
+            right_on=["acc_id", "_upper", "psp_position"],
             how="left",
         )
         dfm = dfm[[x for x in [*psp_info.columns, *df.columns] if x in dfm.columns]]
         outdata[k] = dfm
+        assert len(df) == len(dfm)
+        # import ipdb; ipdb.set_trace()
 
     return outdata
 

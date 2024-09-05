@@ -45,6 +45,16 @@ RENAME = {
     "sample_16": "TMT_134_N",
     "sample_17": "TMT_134_C",
     "sample_18": "TMT_135_N",
+    "ion_126_128": "TMT_126",
+    "ion_127_125": "TMT_127_N",
+    "ion_127_131": "TMT_127_C",
+    "ion_128_128": "TMT_128_N",
+    "ion_128_134": "TMT_128_C",
+    "ion_129_131": "TMT_129_N",
+    "ion_129_138": "TMT_129_C",
+    "ion_130_135": "TMT_123_N",
+    "ion_130_141": "TMT_130_C",
+    "ion_131_138": "TMT_131_N",
 }
 
 
@@ -65,7 +75,16 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
     this makes use of the proteins and mapped_proteins columns in msfragger output
     """
     # Check if a DataFrame is a valid PSM file
-    required_cols = ["peptide", "intensity"]
+    required_cols = ["peptide", "intensity", "protein", "mapped_proteins"]
+
+    if "intensity" not in df.columns:
+        for _x in ("area", "peakarea", "peak_area"):
+            if _x in df.columns:
+                df["intensity"] = df[_x]
+    if "mapped_proteins" not in df.columns:
+        if "alternative_proteins" in df.columns:
+            df["mapped_proteins"] = df["alternative_proteins"]
+
     for required_col in required_cols:
         if required_col not in df.columns:
             raise ValueError(f"Invalid PSM file, missing {required_col} column")
@@ -73,7 +92,7 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
     # if not any(df.columns.str.startswith("TMT")):
     df = df.rename(columns=RENAME)
     df["mapped_proteins"] = (
-        df["protein"] + ", " + df["mapped_proteins"].fillna("")
+        df["protein"] + ", " + df["mapped_proteins"].fillna("").str.replace("@@", ", ")
     )  # mapped_proteins column does not contain the value in the protein column so we add it here
     df["mapped_proteins2"] = df["mapped_proteins"].apply(
         lambda x: x.split(", ") if isinstance(x, str) else []
@@ -83,6 +102,7 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # # Step 2: Explode the 'mapped_proteins' column
+    # df_exploded = df[[*required_cols, "mapped_proteins2"]].explode("mapped_proteins2")
     df_exploded = df.explode("mapped_proteins2")
     df_exploded = df_exploded.reset_index(drop=True)
     df_exploded["protein"] = df_exploded["mapped_proteins2"]
