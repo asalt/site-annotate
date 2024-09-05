@@ -12,7 +12,8 @@ output:
 params:
   data_dir: NULL
   metadata: NULL
-  modi_abbrev: ac 
+  config: "None"  # from python. make all the NULLs "None"?
+  modi_abbrev: ac # not used?
 ---
 
 <style type="text/css">
@@ -32,86 +33,45 @@ suppressPackageStartupMessages(library(ComplexHeatmap))
 suppressPackageStartupMessages(library(circlize))
 suppressPackageStartupMessages(library(reactable))
 suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(here))
 library(dendsort)
 
 
 library(knitr)
 myreactable <- function(x, ...) reactable(x, defaultPageSize = 14, searchable = T, compact = T, resizable=T, sortable = T, filterable = T, ...)
 
-
+(here())
 
 OUTDIR <- params$outdir %||% params$data_dir %||% "."
+
+util_tools <- new.env()
+source( file.path(here("R", "utils.R")), local = util_tools )
+dist_no_na <- util_tools$dist_no_na
+myzscore <- util_tools$myzscore
+io_tools <- new.env()
+source( file.path(here("R", "io.R")), local = io_tools )
+
+# more fine grained params with defaults and validation
+config <- io_tools$get_config(params$config)
 
 ```
 
 ```{r, label=funcs, include=F}
 
 
-create_named_color_list <- function(df, columns) {
-  # Matplotlib default colors (from memory)
-  matplotlib_colors <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", 
-                         "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", 
-                         "#bcbd22", "#17becf")
-  
-  # Initialize an empty list to store the result
-  color_list <- list()
-  
-  # Iterate over each column
-  for (col_name in columns) {
-    unique_vals <- unique(df[[col_name]])
-    n_vals <- length(unique_vals)
-    
-    # Assign colors based on the number of unique values, recycling matplotlib colors if needed
-    colors_assigned <- rep(matplotlib_colors, length.out = n_vals)
-    
-    # Create a named vector for the unique values with corresponding colors
-    color_list[[col_name]] <- setNames(colors_assigned, unique_vals)
-  }
-  
-  return(color_list)
-}
 
-
-myzscore <- function(value, minval = NA, remask = TRUE) {
-  mask <- is.na(value)
-  if (is.na(minval)) minval <- min(value, na.rm = TRUE)
-
-  if (minval == Inf) {
-    minval <- 0
-  }
-
-  value[is.na(value)] <- minval
-  # todo make smaller than min val
-  out <- scale(value)
-
-  # if all NA:
-  if (sum(!is.finite(out)) == length(out)) {
-    out[, 1] <- 0
-  }
-
-  if (remask == TRUE) {
-    out[mask] <- NA
-  }
-  return(out)
-}
-
-dist_no_na <- function(mat) {
-  mat[is.na(mat)] <- min(mat, na.rm = TRUE)
-  edist <- dist(mat)
-  return(edist)
-}
 
 
 read_expr <- function(.x){
-  df <- readr::read_tsv(.x, 
-                       # n_max=400,
+  df <- readr::read_tsv(.x,
+                        #  n_max=4000,
                         show_col_types = FALSE
                         ) %>%
     mutate(expr_file = .x)
   # mutate(modi_id = basename(id) %>% str_extract(pattern = "(sty|k)_[0-9]+_[0-9]+")) %>%
 
   df %<>% mutate(sitename = if_else(is.na(sitename2), sitename, sitename2))
-  if ("geneid" %in% colnames(df)) df %<>% mutate(geneid = as.character(geneid)) 
+  if ("geneid" %in% colnames(df)) df %<>% mutate(geneid = as.character(geneid))
 
   if ("cst_cat#" %in% colnames(df)) df %<>% mutate(`cst_cat#` = as.character(`cst_cat#`))
 
@@ -136,7 +96,7 @@ read_expr <- function(.x){
 # load
 
 
-params: 
+params:
 ```{r, label=load_meta}
 (params)
 
@@ -162,11 +122,10 @@ if (!"expr_file" %in% colnames(meta)){
   knitr::knit_exit()
 }
 
-
-expr_files <- meta$expr_file %>% unique 
+expr_files <- meta$expr_file %>% unique
 
 datas <- expr_files %>%
-    purrr::map( read_expr )  %>% 
+    purrr::map( read_expr )  %>%
     purrr::set_names(expr_files)
 
 ( names(datas) )
@@ -174,7 +133,7 @@ datas <- expr_files %>%
 ```
 
 
-```{r}
+```{r, label='combine data'}
 
 data <- bind_rows(datas) # %>% dplyr::filter(!str_detect(protein, "\\|Cont_"))
 
@@ -190,14 +149,14 @@ dplyr::glimpse(data)
 
 # explore
 
-```{r}
+```{r, label='explore'}
 data %>%
   group_by(expr_file) %>%
   summarize(n = n()) %>%
   arrange(-n)
 ```
 
-```{r}
+```{r, label='explore2'}
 datal <- data %>%
   pivot_longer(
     cols = starts_with("TMT"), names_to = "expr_col"
@@ -210,7 +169,8 @@ datal %>% dplyr::glimpse()
 
 # normalize
 
-```{r}
+```{r, label='normalize', cache=F}
+# cacheing this is not working in Rmd
 .minval <- datal %>%
   dplyr::filter(value > 0) %>%
   pull(value) %>%
@@ -224,11 +184,11 @@ datal %<>%
   mutate(
     log2_val = log2(val_mednorm)
   )  %>%
-  group_by(site_id) %>% mutate(zscore = myzscore(log2_val)) %>% ungroup()
+  group_by(site_id) %>% mutate(zscore = util_tools$myzscore(log2_val)) %>% ungroup()
 
-counts <- datal %>% 
-  dplyr::filter(!is.na(log2_val)) %>% 
-  group_by(site_id) %>% 
+counts <- datal %>%
+  dplyr::filter(!is.na(log2_val)) %>%
+  group_by(site_id) %>%
   summarize(n=n()) %>%
   arrange(-n)
 maxn <- min(max(counts$n), nrow(metadata))
@@ -243,7 +203,7 @@ datal %<>% dplyr::filter(
 ```
 
 
-```{r, eval=F}
+```{r, eval=T, label='batch correction'}
 
 do_combat <- function(datal){
   data_wide <- datal %>%
@@ -252,29 +212,23 @@ do_combat <- function(datal){
   rownames(mat) <-  data_wide$site_id
   corrected_data <- sva::ComBat(dat = mat, batch = meta$recno %>% as.character )
 }
-combat_corrected <- do_combat(datal) 
-combat_corrected %<>% as.data.frame %>% rownames_to_column(var="site_id")
-combat_correctedl <- combat_corrected %>% pivot_longer(-site_id, values_to = 'log2_val_combat')
-datal2 <- datal %>% left_join(combat_correctedl)
-datal <- datal2
+if (!is.null(params$batch)){
+  combat_corrected <- do_combat(datal)
+  combat_corrected %<>% as.data.frame %>% rownames_to_column(var="site_id")
+  combat_correctedl <- combat_corrected %>% pivot_longer(-site_id, values_to = 'log2_val')
+  datal2 <- datal %>% left_join(combat_correctedl)
+  datal <- datal2
+  }
 
-#
-datal %<>%
-  group_by(site_id) %>%
-  mutate(
-    zscore = myzscore(log2_val_combat)
-  ) %>%
-  filter(!all(is.na(value))) %>% # this will get rid of all nas
-  ungroup()
-
-# datal %>% filter(fifteenmer == "AFLCGVMkTYRQREK", ENSG == "ENSMUSG00000066037", geneid == "74326", symbol == "Hnrnpr", taxon == 10090)
 ```
 
-```{r}
+```{r, label='inspect data'}
 ( datal %>%   nrow() )
 ( datal %>%  distinct(spectra, .keep_all=T) %>% nrow() )
 ( datal %>%  distinct(name, spectra, .keep_all=T) %>% nrow() )
 ```
+
+## distributions
 
 ```{r}
 datal %>%
@@ -306,7 +260,7 @@ datal %>%
 
 
 
-```{r}
+```{r, label='pivot_wider'}
 # .id_cols <- c("fifteenmer", "ENSG", "ENSP", "geneid", "taxon", "position", "sitename", "id", "modi_id")
 #datal %>% dplyr::summarise(n = dplyr::n(), .by = c(fifteenmer, ENSG, ENSP, geneid, taxon, sitename, id, name))
 dataw <- datal %>%
@@ -321,7 +275,7 @@ dataw <- datal %>%
 ```{r, label='limma'}
 library(limma)
 
-mod <- model.matrix(~ 0 + group, meta)
+mod <- model.matrix(config$limma$formula %||% as.formula('~0+group'), meta)
 rownames(mod) <- meta$name
 mat <- dataw[, meta$name]
 colnames(mod) <- make.names(colnames(mod))
@@ -329,10 +283,10 @@ colnames(mod) <- make.names(colnames(mod))
 generate_contrasts <- function(df, group_var) {
   # Get unique levels of the grouping variable
   group_levels <- unique(df[[group_var]])
-  
+
   # Generate all pairwise combinations of group levels
   contrast_combinations <- combn(group_levels, 2, simplify = FALSE)
-  
+
   # Create contrasts for each combination
   contrast_strings <- lapply(contrast_combinations, function(combo) {
     paste(paste0(group_var, combo[1]), "-", paste0(group_var, combo[2]))
@@ -341,7 +295,7 @@ generate_contrasts <- function(df, group_var) {
 }
 
 
-contrast_strings <- generate_contrasts(meta, "group") 
+contrast_strings <- config$limma$contrasts %||%  generate_contrasts(meta, "group")
 contrasts <- makeContrasts(contrasts = contrast_strings, levels = mod)
 
  # ( contrasts <- limma::makeContrasts(contrast_strings, levels = mod) )
@@ -352,7 +306,7 @@ contrasts <- makeContrasts(contrasts = contrast_strings, levels = mod)
 
 
 
-```{r, label='lmFit'}
+```{r, label='lmFit', cache=TRUE}
 fit <- limma::lmFit(mat, mod)
 fit <- contrasts.fit(fit, contrasts)
 fitres <- fit %>% limma::eBayes(robust = T, trend = T)
@@ -360,7 +314,7 @@ fitres <- fit %>% limma::eBayes(robust = T, trend = T)
 
 
 
-```{r}
+```{r, label='topTables'}
 toptables <- colnames(contrasts) %>%
   purrr::map(~ {
     limma::topTable(fitres, coef = .x, number = Inf, sort.by = "none")
@@ -373,7 +327,7 @@ toptables2 <- toptables %>% purrr::map(~ {
   bind_cols(
     dataw %>% select(-meta$name),
     .x
-  ) %>% arrange(P.Value) %>% 
+  ) %>% arrange(P.Value) %>%
     left_join(data %>% select(
       acc_id,
       lt_lit,
@@ -383,10 +337,10 @@ toptables2 <- toptables %>% purrr::map(~ {
       uniprot_id,
       ENSP,
       site_id
-    ) %>% 
+    ) %>%
     distinct()
   )
-  
+
 })
 
 
@@ -395,8 +349,14 @@ toptables2 %>% purrr::iwalk(~ {
   if (!fs::dir_exists(.outdir)) fs::dir_create(.outdir)
   .outf <- .y %>% str_replace(" - ", "_minus_")
   .fulloutf <- file.path(.outdir, paste0(make.names(.outf), ".tsv"))
+
+  if (fs::file_exists(.fulloutf) && config$advanced$replace == FALSE) {
+    cat(paste0("Skipping ", .fulloutf, " because it exists and replace is FALSE\n"))
+    return()
+  }
   cat(paste0("Writing ", .fulloutf,'\n'))
   .x %>% write_tsv(.fulloutf)
+
 })
 ```
 
@@ -404,7 +364,7 @@ toptables2 %>% purrr::iwalk(~ {
 
 ## stat overview
 
-```{r}
+```{r, label='p value dist'}
 plts <- toptables2 %>%
   purrr::imap(
     ~ {
@@ -418,7 +378,7 @@ plts <- toptables2 %>%
 ```
 
 
-```{r}
+```{r, label='adj p value dist'}
 plts <- toptables2 %>%
   purrr::imap(
     ~ {
@@ -433,6 +393,7 @@ plts <- toptables2 %>%
 
 ```{r, include=F}
 # to initialize the js dependency
+# may not be necessary
 reactable(mtcars)
 ```
 
@@ -471,33 +432,33 @@ knitr::knit_exit()
 ```
 
 
-```{r}
-suppressPackageStartupMessages(library(ComplexHeatmap))
-suppressPackageStartupMessages(library(circlize))
-```
-
 ```{r, fig.width=9, fig.height=12}
 condense_groups <- function(.mat){
-  
+
    # Identify numeric and non-numeric columns
   numeric_cols <- sapply(.mat, is.numeric) & !names(.mat) %in% c("ms_lit", "lt_lit")
   non_numeric_cols <- !numeric_cols
   # Group by all numeric columns and summarize non-numeric columns
   .mat2 <- .mat %>%  select(non_numeric_cols[ non_numeric_cols == TRUE] %>% names, numeric_cols[ numeric_cols == TRUE] %>% names )
-  
+
   numeric_cols <- sapply(.mat2, is.numeric) & !names(.mat2) %in% c("ms_lit", "lt_lit")
   non_numeric_cols <- !numeric_cols
-  
+
   condensed_data <- .mat2 %>%
-    group_by(across(which(numeric_cols))) %>% 
-    summarize(across(which(non_numeric_cols), ~paste(unique(.), collapse=", ")), .groups = 'drop')
+    group_by(across(which(numeric_cols))) %>%
+    summarize(across(which(non_numeric_cols), ~paste(sort(unique(.)), collapse="/")), .groups = 'drop')
+    #summarize(across(which(non_numeric_cols), ~paste(unique(.), collapse="/")), .groups = 'drop')
   #%>%
- 
+
+  condensed_data$sitename %<>% str_replace_all('/', ' / ')
+
   return(condensed_data)
 }
 
 do_plot <- function(.x, .y){
-   n <- 60
+
+   n <- config$limma$top_n %||% 60
+
   .sel <- .x %>%
     arrange(P.Value) %>%
     head(n = as.integer(100*n)) # hack
@@ -505,25 +466,24 @@ do_plot <- function(.x, .y){
   .data <- datal %>%
     dplyr::filter(site_id %in% .sel$site_id) %>%
     dplyr::filter(!str_detect(name, "Refmix")) # %>%
-  
-  
+
+
   # mutate(position_absolut = as.character(position_absolut))
   # .id_cols <- c(
   #   "fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id", "lt_lit",
   #   "ms_lit", "site_id"
   # )
-  
+
   .mat <- .data %>% pivot_wider(id_cols = site_id, names_from = name, values_from = zscore, )
   .mat %<>% left_join(datal %>% distinct(site_id, ms_lit, lt_lit, sitename))
   .mat %<>% mutate(ms_lit = replace_na(ms_lit, 0), lt_lit = replace_na(lt_lit, 0))
   .mat <- condense_groups(.mat) %>% head(n = n) # condensing should maybe happen earlier
-  
+
   # .mat <- .data %>% pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
   .cids <- intersect(colnames(.mat), meta$name)
   .meta <- meta %>% dplyr::filter(name %in% .cids)
 
-
-  .colors <- create_named_color_list(.meta, c('group'))
+  .colors <- util_tools$create_named_color_list(.meta, c('group'))
   ca <- ComplexHeatmap::columnAnnotation(
     # treat = .meta$treat,
     group = .meta$group,
@@ -537,11 +497,11 @@ do_plot <- function(.x, .y){
   }
 
   row_annotations <- HeatmapAnnotation(
-    lt_lit = .mat$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
-    ms_lit = .mat$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
+    lt_lit = .mat$lt_lit %>% hide_zero() %>% str_wrap(11, whitespace_only=FALSE) %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
+    ms_lit = .mat$ms_lit %>% hide_zero() %>% str_wrap(11, whitespace_only=FALSE) %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
     which = "row",
     gp = gpar(fontsize = 2, size = 2),
-    width = unit(1, "cm"),
+    width = unit(.72, "in"),
     annotation_name_side = "top",
     border = T,
     show_annotation_name = T
@@ -573,7 +533,7 @@ do_plot <- function(.x, .y){
   draw(ht)
 
   .height <- 7 + (nrow(.ht_mat) * .2 )
-  .width <- 8 + (ncol(.ht_mat) * .2 )
+  .width <- 9 + (ncol(.ht_mat) * .2 )
 
   pdf(.fulloutf, height = .height, width = .width)
   print(ht)
@@ -584,29 +544,35 @@ do_plot <- function(.x, .y){
   .comp <- .y %>%
     str_extract_all("(?<=group)[a-zA-Z0-9]+") %>%
     unlist()
-  .data2 <- .data %>% dplyr::filter(group %in% .comp)
-  .id_cols <- c("fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id")
-  .mat2 <- .data2 %>%
-    #group_by(!!!rlang::syms(.id_cols)) %>%
-    group_by(site_id) %>%
-    mutate(zscore = myzscore(log2_val)) %>%
-    ungroup() %>%
-    # pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
-    pivot_wider(id_cols = site_id, names_from = name, values_from = zscore, )
-  .mat2 %<>% left_join(datal %>% distinct(site_id, ms_lit, lt_lit, sitename))
-  .mat2 %<>% mutate(ms_lit = replace_na(ms_lit, 0), lt_lit = replace_na(lt_lit, 0))
-  .mat2 <- .mat2 %>% condense_groups() %>% head(n = n)
-  .cids <- intersect(colnames(.mat2), meta$name)
-  .meta <- meta %>% dplyr::filter(name %in% .cids)
-  
-  
-  .ht_mat2 <- .mat2[, .meta$name] %>% as.matrix()
-  .meta2 <- .meta %>%
-    dplyr::filter(name %in% colnames(.mat2)) %>%
-    mutate(name = factor(name, levels = colnames(.mat2), ordered = T)) %>%
-    arrange(name)
+  # .data2 <- .data %>% dplyr::filter(group %in% .comp)
+  # .id_cols <- c("fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id")
+  # .mat2 <- .data2 %>%
+  #   #group_by(!!!rlang::syms(.id_cols)) %>%
+  #   group_by(site_id) %>%
+  #   mutate(zscore = util_tools$myzscore(log2_val)) %>%
+  #   ungroup() %>%
+  #   # pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
+  #   pivot_wider(id_cols = site_id, names_from = name, values_from = zscore, )
+  # .mat2 %<>% left_join(datal %>% distinct(site_id, ms_lit, lt_lit, sitename))
+  # .mat2 %<>% mutate(ms_lit = replace_na(ms_lit, 0), lt_lit = replace_na(lt_lit, 0))
+  # .mat2 <- .mat2 %>% condense_groups() %>% head(n = n)
 
-  
+  .cids <- .data %>% dplyr::filter(group %in% .comp) %>% pull(name) %>% unique()
+  .meta2 <- meta %>% dplyr::filter(name %in% .cids)
+  .to_remove <- intersect( setdiff(colnames(.mat), .meta2$name), .meta$name)
+  .ids <- setdiff(colnames(.mat), .to_remove)
+  .mat2 <- .mat[, .ids]
+  .cids <- intersect(colnames(.mat2), meta$name)
+
+  .ht_mat2 <- .mat2[, .meta2$name] %>% as.matrix()
+
+  (all(.mat2$sitename == .mat$sitename))
+  # .meta2 <- .meta %>%
+  #   dplyr::filter(name %in% colnames(.mat2)) %>%
+  #   mutate(name = factor(name, levels = colnames(.mat2), ordered = T)) %>%
+  #   arrange(name)
+
+
   ca <- ComplexHeatmap::columnAnnotation(
     # treat = .meta2$treat,
     group = .meta2$group,
@@ -618,7 +584,7 @@ do_plot <- function(.x, .y){
     lt_lit = .mat2$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
     ms_lit = .mat2$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
     gp = gpar(fontsize = 2, size = 2),
-    width = unit(.32, "in"),
+    width = unit(.72, "in"),
     annotation_name_side = "top",
     border = T,
     show_annotation_name = T,
@@ -628,8 +594,8 @@ do_plot <- function(.x, .y){
   ht <- ComplexHeatmap::Heatmap(
     .ht_mat2,
     column_split = .meta2$group,
-    width = unit(ncol(.ht_mat) * .2, 'in'),
-    height = unit(nrow(.ht_mat) * .24, 'in'),
+    width = unit(ncol(.ht_mat2) * .2, 'in'),
+    height = unit(nrow(.ht_mat2) * .24, 'in'),
     row_labels = .mat2$sitename %>% stringr::str_wrap(width = 38),
     row_names_gp = grid::gpar(fontsize = 6),
     column_names_side = "top",
@@ -644,7 +610,7 @@ do_plot <- function(.x, .y){
 
   .outdir <- file.path(OUTDIR, "results", "modi")
   .outf <- .y %>% str_replace(" - ", "_minus_")
-  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top", as.character(n), "_subsel", ".pdf"))
+  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top", as.character(n), "_subsel_", nrow(.ht_mat2), 'x', ncol(.ht_mat2), ".pdf"))
   draw(ht)
 
   .height <- 7 + (nrow(.ht_mat2) * .2 )
@@ -652,135 +618,7 @@ do_plot <- function(.x, .y){
   pdf(.fulloutf, height = .height, width = .width)
   print(ht)
   dev.off()
-  
+
 }
 
 toptables2 %>% purrr::imap(~ do_plot(.x, .y) )
-
-
-```{r, eval=F}
-# histones <- list(
-#   "HIST1H1A" = "3004",
-#   "HIST1H1B" = "3005",
-#   "HIST1H1C" = "3006",
-#   "HIST1H1D" = "3007",
-#   "HIST1H1E" = "3008",
-#   "HIST1H2AA" = "8334",
-#   "HIST1H2AB" = "8335",
-#   "HIST1H2AC" = "8336",
-#   "HIST1H2AD" = "8337",
-#   "HIST1H2AE" = "8338",
-#   "HIST1H2BA" = "3012",
-#   "HIST1H2BB" = "3020",
-#   "HIST1H2BC" = "8348",
-#   "HIST1H2BD" = "8349",
-#   "HIST1H2BE" = "8350",
-#   "HIST1H3A" = "8351",
-#   "HIST1H3B" = "8352",
-#   "HIST1H3C" = "8353",
-#   "HIST1H3D" = "8354",
-#   "HIST1H3E" = "8355",
-#   "HIST1H4A" = "8358",
-#   "HIST1H4B" = "8360",
-#   "HIST1H4C" = "8361",
-#   "HIST1H4D" = "8362",
-#   "HIST1H4E" = "8363",
-#   "Hist1h1a" = "15089",
-#   "Hist1h1b" = "15090",
-#   "Hist1h1c" = "15091",
-#   "Hist1h1d" = "15092",
-#   "Hist1h1e" = "15093",
-#   "Hist1h2aa" = "319165",
-#   "Hist1h2ab" = "15094",
-#   "Hist1h2ac" = "15095",
-#   "Hist1h2ad" = "15096",
-#   "Hist1h2ae" = "15097",
-#   "Hist1h2ba" = "15107",
-#   "Hist1h2bb" = "15108",
-#   "Hist1h2bc" = "15109",
-#   "Hist1h2bd" = "15110",
-#   "Hist1h2be" = "15111",
-#   "Hist1h3a" = "319160",
-#   "Hist1h3b" = "319161",
-#   "Hist1h3c" = "319162",
-#   "Hist1h3d" = "319163",
-#   "Hist1h3e" = "319164",
-#   "Hist1h4a" = "15119",
-#   "Hist1h4b" = "15120",
-#   "Hist1h4c" = "15121",
-#   "Hist1h4d" = "15122",
-#   "Hist1h4e" = "15123"
-# )
-
-# .sel <- datal %>% distinct(geneid, .keep_all = T) %>% filter(geneid%in%histones)
-.sel <- datal %>% filter(str_detect(symbol, "STAT1"))
-# .sel <- datal %>% filter(str_detect(symbol, "Stat" )) there's no mouse stat1 present
-.data <- datal %>%
-  dplyr::filter(sitename %in% .sel$sitename) %>%
-  dplyr::filter(!str_detect(name, "RefMix")) # %>%
-# mutate(position_absolut = as.character(position_absolut))
-.id_cols <- c(
-  "fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id", "lt_lit",
-  "ms_lit"
-)
-.mat <- .data %>% pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
-.cids <- intersect(colnames(.mat), meta$name)
-.meta <- meta %>% dplyr::filter(name %in% .cids)
-
-ca <- ComplexHeatmap::columnAnnotation(
-  treat = .meta$treat,
-  annotation_name_side = "left",
-  col = list(
-    treat = c(
-      untreated = "#1f77b4",
-      carboplatin = "#ff7f0e",
-      IMT = "#2ca02c",
-      carboplatin_IMT = "#d62728"
-    )
-  )
-)
-
-#
-hide_zero <- function(x) {
-  sapply(x, function(y) ifelse(y == 0, "", as.character(y)))
-}
-
-row_annotations <- HeatmapAnnotation(
-  lt_lit = .mat$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
-  ms_lit = .mat$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
-  which = "row",
-  gp = gpar(fontsize = 2, size = 2),
-  width = unit(.3, "in"),
-  annotation_name_side = "top",
-  border = T,
-  show_annotation_name = T
-)
-
-.ht_mat <- .mat[, .meta$name] %>% as.matrix()
-ht <- ComplexHeatmap::Heatmap(
-  .ht_mat,
-  column_split = .meta$treat,
-  row_labels = .mat$sitename,
-  row_names_gp = grid::gpar(fontsize = 7),
-  column_names_side = "top",
-  heatmap_legend_param = list(title = "zscore"),
-  column_title = .y,
-  right_annotation = row_annotations,
-  top_annotation = ca,
-  cluster_rows = dendsort(hclust(dist(.ht_mat), method = "ward.D2")),
-  # cluster_columns = dendsort(hclust(dist(t(.ht_mat)), method="ward.D2"))
-  clustering_method_columns = "ward.D2"
-  # clustering_method_rows = "ward.D2",
-  # clustering_method_columns = "ward.D2"
-)
-
-.outdir <- file.path("../", "results", "modi")
-.outf <- "stat1"
-.fulloutf <- file.path(.outdir, paste0(make.names(.outf), ".pdf"))
-draw(ht)
-
-pdf(.fulloutf, height = 7, width = 13)
-print(ht)
-dev.off()
-```
-
