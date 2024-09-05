@@ -1,3 +1,5 @@
+suppressPackageStartupMessages(library(rlang))
+suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(magrittr))
 suppressPackageStartupMessages(library(purrr))
 suppressPackageStartupMessages(library(readr))
@@ -67,4 +69,47 @@ extract_key_value_pairs <- function(input_string) {
   named_vector <- setNames(values, keys)
 
   return(named_vector)
+}
+
+is_null_config <- function(val, nullstrings = c("None", "")) {
+  if (is.null(val)) return(NULL)
+  if (all(val %in% nullstrings)) return(NULL)
+  return(val)
+}
+
+get_config <- function(file_path) {
+  # Read the config file
+  if (!is.null(file_path) && file_path == "None") {
+    file_path <- NULL
+  }
+
+  config_file <-  file_path %||% file.path(here("config"), "base.toml")
+  config <- RcppTOML::parseTOML(config_file)
+
+  if (is.null(config$params)) {
+    warn("No parameters found in the config file.")
+    return()
+  }
+
+  config$params$batch <- is_null_config(config$params$batch)
+  # if (config$params$batch == "None" || config$params$batch == "") {
+  #   config$params$batch <- NULL
+  # }
+
+  config$params$limma$formula <- is_null_config(config$params$limma$formula)
+  if (!is.null(config$params$limma$formula)) {
+    config$params$limma$formula %<>% as.formula
+  }
+
+  config$params$limma$contrasts <- is_null_config(config$params$limma$contrasts)
+
+  config$params$heatmap$cut_by <- is_null_config(config$params$heatmap$cut_by)
+
+  if (is.null(config$params$advanced)) {
+    config$params$advanced <- list()
+  }
+  config$params$advanced$replace <- is_null_config(config$params$advanced$replace) %||% FALSE
+
+
+  return(config$params)
 }
