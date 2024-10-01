@@ -69,9 +69,7 @@ def show_templates(extended):
 
 def common_options(f):
     f = click.option("-c", "--config", type=click.Path(exists=True, dir_okay=False))(f)
-    f = click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))(
-        f
-    )
+    f = click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))( f)
     f = click.option(
         "-o",
         "--output-dir",
@@ -217,13 +215,15 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
 
                 ix = meta_df[
                     (meta_df["rec_run_search"] == rrs) & (meta_df["label"] == label)
-                ].index[0]
+                ].index
+                assert(len(ix)) == 1
+                ix = ix[0]
                 meta_df.loc[ix, "expr_col"] = expr_col
                 meta_df.loc[ix, "expr_file"] = expr_file
         else:
             expr_col = "intensity_sum"
             meta_df.loc[_meta.index, "expr_col"] = "intensity_sum"
-        return meta_df
+    return meta_df
 
 
 def validate_meta(metadata_file: pathlib.Path, data_dir: pathlib.Path):
@@ -274,7 +274,7 @@ def report(template, config, data_dir, output_dir, metadata, **kwargs):
 
     # Create a dictionary with all parameters
     params_dict = {
-        "config": str(config),  # None strings will be interpreted correctly
+        # "config": str(config),  # None strings will be interpreted correctly
         "data_dir": str(data_dir),
         # "output_dir": str(output_dir),
         "metadata": str(meta_validated_fname),

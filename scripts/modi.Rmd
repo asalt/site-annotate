@@ -54,6 +54,10 @@ source( file.path(here("R", "io.R")), local = io_tools )
 # more fine grained params with defaults and validation
 config <- io_tools$get_config(params$config)
 
+knitr::opts_chunk$set(fig.path="modi-figures")
+
+
+
 ```
 
 ```{r, label=funcs, include=F}
@@ -123,6 +127,7 @@ if (!"expr_file" %in% colnames(meta)){
 }
 
 expr_files <- meta$expr_file %>% unique
+
 
 datas <- expr_files %>%
     purrr::map( read_expr )  %>%
@@ -230,7 +235,7 @@ if (!is.null(params$batch)){
 
 ## distributions
 
-```{r}
+```{r, label='distibrution1'}
 datal %>%
   distinct(name, spectra, .keep_all=T) %>%
   ggplot(aes(x = log2_val, col = name)) +
@@ -239,7 +244,7 @@ datal %>%
 ```
 
 
-```{r}
+```{r, label='distibrution2'}
 datal %>%
   distinct(name, spectra, .keep_all=T) %>%
   ggplot(aes(x = log2_val, col = name)) +
@@ -249,7 +254,7 @@ datal %>%
 
 
 
-```{r}
+```{r, 'distribution3'}
 datal %>%
   distinct(name, spectra, .keep_all=T) %>%
   ggplot(aes(x = log2_val, col = name)) +
@@ -272,7 +277,7 @@ dataw <- datal %>%
   )
 ```
 # limma
-```{r, label='limma'}
+```{r, label='limma', cache=F}
 library(limma)
 
 mod <- model.matrix(config$limma$formula %||% as.formula('~0+group'), meta)
@@ -433,6 +438,20 @@ knitr::knit_exit()
 
 
 ```{r, fig.width=9, fig.height=12}
+
+# function to sort strings by the numeric part after the underscore
+sort_by_number_after_underscore <- function(strings) {
+  # Extract the numeric part after the underscore using gsub
+  # but it must have _ here.
+  # but below not guaranteed
+  # come back to this later
+  numeric_part <- as.numeric(gsub(".*_.*?(\\d+).*", "\\1", strings))
+
+  # Sort the strings based on the numeric part
+  sorted_strings <- strings[order(numeric_part)]
+  return(sorted_strings)
+}
+
 condense_groups <- function(.mat){
 
    # Identify numeric and non-numeric columns
@@ -449,30 +468,21 @@ condense_groups <- function(.mat){
     summarize(across(which(non_numeric_cols), ~paste(sort(unique(.)), collapse="/")), .groups = 'drop')
     #summarize(across(which(non_numeric_cols), ~paste(unique(.), collapse="/")), .groups = 'drop')
   #%>%
-
-  condensed_data$sitename %<>% str_replace_all('/', ' / ')
-
+  condensed_data$sitename <- condensed_data$sitename %>%  str_replace_all('/', ' / ') %>% stringr::str_wrap(width = 48)
   return(condensed_data)
 }
 
-do_plot <- function(.x, .y){
 
-   n <- config$limma$top_n %||% 60
+do_plot <- function(df, comp_name, n=60){
 
-  .sel <- .x %>%
+
+  .sel <- df %>%
     arrange(P.Value) %>%
     head(n = as.integer(100*n)) # hack
 
   .data <- datal %>%
     dplyr::filter(site_id %in% .sel$site_id) %>%
     dplyr::filter(!str_detect(name, "Refmix")) # %>%
-
-
-  # mutate(position_absolut = as.character(position_absolut))
-  # .id_cols <- c(
-  #   "fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id", "lt_lit",
-  #   "ms_lit", "site_id"
-  # )
 
   .mat <- .data %>% pivot_wider(id_cols = site_id, names_from = name, values_from = zscore, )
   .mat %<>% left_join(datal %>% distinct(site_id, ms_lit, lt_lit, sitename))
@@ -496,12 +506,20 @@ do_plot <- function(.x, .y){
     sapply(x, function(y) ifelse(y == 0, "", as.character(y)))
   }
 
+  nchar_max <- max(
+    .mat$lt_lit %>% nchar() %>% max(),
+    .mat$ms_lit %>% nchar() %>% max()
+    )
+  .annot_font_size <- 7
+  anno_width <- unit( (nchar_max+1) * (.annot_font_size/12) , "picas")
+
   row_annotations <- HeatmapAnnotation(
-    lt_lit = .mat$lt_lit %>% hide_zero() %>% str_wrap(11, whitespace_only=FALSE) %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
-    ms_lit = .mat$ms_lit %>% hide_zero() %>% str_wrap(11, whitespace_only=FALSE) %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
+    lt_lit = .mat$lt_lit %>% hide_zero() %>% str_wrap(10, whitespace_only=FALSE) %>% anno_text(show_name = T, gp = gpar(fontsize = .annot_font_size), location = unit(.5, "npc"), just = "centre"),
+    ms_lit = .mat$ms_lit %>% hide_zero() %>% str_wrap(10, whitespace_only=FALSE) %>% anno_text(show_name = T, gp = gpar(fontsize = .annot_font_size), location = unit(.5, "npc"), just = "center"),
     which = "row",
     gp = gpar(fontsize = 2, size = 2),
-    width = unit(.72, "in"),
+    #width = unit(.72, "in"),
+    width = anno_width,
     annotation_name_side = "top",
     border = T,
     show_annotation_name = T
@@ -513,11 +531,11 @@ do_plot <- function(.x, .y){
     width = unit(ncol(.ht_mat) * .2, 'in'),
     height = unit(nrow(.ht_mat) * .24, 'in'),
     column_split = .meta$group,
-    row_labels = .mat$sitename %>% stringr::str_wrap(width = 48),
+    row_labels = .mat$sitename,
     row_names_gp = grid::gpar(fontsize = 6),
     column_names_side = "top",
     heatmap_legend_param = list(title = "zscore"),
-    column_title = .y,
+    column_title = comp_name,
     right_annotation = row_annotations,
     top_annotation = ca,
     cluster_rows = dendsort(hclust(dist(.ht_mat), method = "ward.D2")),
@@ -528,10 +546,10 @@ do_plot <- function(.x, .y){
   )
 
   .outdir <- file.path(OUTDIR, "results", "modi")
-  .outf <- .y %>% str_replace(" - ", "_minus_")
-  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top", as.character(n), ".pdf"))
-  draw(ht)
+  .outf <- comp_name %>% str_replace(" - ", "_minus_")
+  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top_", nrow(.ht_mat), 'x', ncol(.ht_mat), ".pdf"))
 
+  draw(ht)
   .height <- 7 + (nrow(.ht_mat) * .2 )
   .width <- 9 + (ncol(.ht_mat) * .2 )
 
@@ -541,21 +559,9 @@ do_plot <- function(.x, .y){
 
 
   # same thing but only the two comparison
-  .comp <- .y %>%
+  .comp <- comp_name %>%
     str_extract_all("(?<=group)[a-zA-Z0-9]+") %>%
     unlist()
-  # .data2 <- .data %>% dplyr::filter(group %in% .comp)
-  # .id_cols <- c("fifteenmer", "ENSG", "ENSP", "geneid", "symbol", "taxon", "AA", "position_absolut", "sitename", "id")
-  # .mat2 <- .data2 %>%
-  #   #group_by(!!!rlang::syms(.id_cols)) %>%
-  #   group_by(site_id) %>%
-  #   mutate(zscore = util_tools$myzscore(log2_val)) %>%
-  #   ungroup() %>%
-  #   # pivot_wider(id_cols = .id_cols, names_from = name, values_from = zscore, )
-  #   pivot_wider(id_cols = site_id, names_from = name, values_from = zscore, )
-  # .mat2 %<>% left_join(datal %>% distinct(site_id, ms_lit, lt_lit, sitename))
-  # .mat2 %<>% mutate(ms_lit = replace_na(ms_lit, 0), lt_lit = replace_na(lt_lit, 0))
-  # .mat2 <- .mat2 %>% condense_groups() %>% head(n = n)
 
   .cids <- .data %>% dplyr::filter(group %in% .comp) %>% pull(name) %>% unique()
   .meta2 <- meta %>% dplyr::filter(name %in% .cids)
@@ -566,12 +572,7 @@ do_plot <- function(.x, .y){
 
   .ht_mat2 <- .mat2[, .meta2$name] %>% as.matrix()
 
-  (all(.mat2$sitename == .mat$sitename))
-  # .meta2 <- .meta %>%
-  #   dplyr::filter(name %in% colnames(.mat2)) %>%
-  #   mutate(name = factor(name, levels = colnames(.mat2), ordered = T)) %>%
-  #   arrange(name)
-
+  # (all(.mat2$sitename == .mat$sitename)) # this should be TRUE
 
   ca <- ComplexHeatmap::columnAnnotation(
     # treat = .meta2$treat,
@@ -581,10 +582,11 @@ do_plot <- function(.x, .y){
   )
 
   row_annotations <- HeatmapAnnotation(
-    lt_lit = .mat2$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "centre"),
-    ms_lit = .mat2$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = 7), location = unit(.5, "npc"), just = "center"),
+    lt_lit = .mat2$lt_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = .annot_font_size), location = unit(.5, "npc"), just = "centre"),
+    ms_lit = .mat2$ms_lit %>% hide_zero() %>% anno_text(show_name = T, gp = gpar(fontsize = .annot_font_size), location = unit(.5, "npc"), just = "center"),
     gp = gpar(fontsize = 2, size = 2),
-    width = unit(.72, "in"),
+    #width = unit(.72, "in"),
+    width = anno_width,
     annotation_name_side = "top",
     border = T,
     show_annotation_name = T,
@@ -596,11 +598,11 @@ do_plot <- function(.x, .y){
     column_split = .meta2$group,
     width = unit(ncol(.ht_mat2) * .2, 'in'),
     height = unit(nrow(.ht_mat2) * .24, 'in'),
-    row_labels = .mat2$sitename %>% stringr::str_wrap(width = 38),
+    row_labels = .mat2$sitename,
     row_names_gp = grid::gpar(fontsize = 6),
     column_names_side = "top",
     heatmap_legend_param = list(title = "zscore"),
-    column_title = .y,
+    column_title = comp_name,
     top_annotation = ca,
     right_annotation = row_annotations,
     cluster_rows = dendsort(hclust(dist(.ht_mat2), method = "ward.D2")),
@@ -609,8 +611,8 @@ do_plot <- function(.x, .y){
   )
 
   .outdir <- file.path(OUTDIR, "results", "modi")
-  .outf <- .y %>% str_replace(" - ", "_minus_")
-  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top", as.character(n), "_subsel_", nrow(.ht_mat2), 'x', ncol(.ht_mat2), ".pdf"))
+  .outf <- comp_name %>% str_replace(" - ", "_minus_")
+  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), "_top_subsel_", nrow(.ht_mat2), 'x', ncol(.ht_mat2), ".pdf"))
   draw(ht)
 
   .height <- 7 + (nrow(.ht_mat2) * .2 )
@@ -621,4 +623,12 @@ do_plot <- function(.x, .y){
 
 }
 
-toptables2 %>% purrr::imap(~ do_plot(.x, .y) )
+
+n <- config$limma$top_n %||% 60
+toptables2 %>% purrr::imap(~ {
+  df <- .x
+  comp_name <- .y
+  n %>% purrr::imap(~{
+        do_plot(df, comp_name, n=.x)
+      })
+})
