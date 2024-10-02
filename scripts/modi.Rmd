@@ -60,45 +60,7 @@ knitr::opts_chunk$set(fig.path="modi-figures")
 
 ```
 
-```{r, label=funcs, include=F}
-
-
-
-
-
-read_expr <- function(.x){
-  df <- readr::read_tsv(.x,
-                        #  n_max=4000,
-                        show_col_types = FALSE
-                        ) %>%
-    mutate(expr_file = .x)
-  # mutate(modi_id = basename(id) %>% str_extract(pattern = "(sty|k)_[0-9]+_[0-9]+")) %>%
-
-  df %<>% mutate(sitename = if_else(is.na(sitename2), sitename, sitename2))
-  if ("geneid" %in% colnames(df)) df %<>% mutate(geneid = as.character(geneid))
-
-  if ("cst_cat#" %in% colnames(df)) df %<>% mutate(`cst_cat#` = as.character(`cst_cat#`))
-
-  if ("all_possible_positions" %in% colnames(df)) df$all_possible_positions <- NULL
-  if ("all_possible_positions_psp" %in% colnames(df)) df$all_possible_positions_psp <- NULL
-
-  if ("ms_lit" %in% colnames(df)) df %<>% mutate(`ms_lit` = replace_na(ms_lit, 0))
-  if ("lt_lit" %in% colnames(df)) df %<>% mutate(`lt_lit` = replace_na(lt_lit, 0))
-
-  if (!"fifteenmer" %in% colnames(df)) stop('fifteenmer missing')
-  if (!"ENSP" %in% colnames(df)) stop('ENSP missing, this is a protein id ')
-  if (!"sitename" %in% colnames(df)) stop('sitename missing')
-  if (!"taxon" %in% colnames(df)) df$taxon <- "<NULL>"
-  df %<>% mutate(site_id = str_c(sitename, ENSP, fifteenmer, sep='_'))
-
-  return(df)
-}
-
-```
-
-
 # load
-
 
 params:
 ```{r, label=load_meta}
@@ -130,7 +92,7 @@ expr_files <- meta$expr_file %>% unique
 
 
 datas <- expr_files %>%
-    purrr::map( read_expr )  %>%
+    purrr::map( io_tools$read_expr )  %>%
     purrr::set_names(expr_files)
 
 ( names(datas) )
@@ -260,6 +222,7 @@ datal %>%
   ggplot(aes(x = log2_val, col = name)) +
   geom_density() +
   facet_wrap(~expr_file+AA)
+
 ```
 
 
@@ -275,6 +238,9 @@ dataw <- datal %>%
     #values_fn = function(x) median(x, na.rm = T),
     values_from = log2_val, # sometimes this happens after merging with phosphositeplus table
   )
+dataw %>% write_tsv(file.path(OUTDIR, "modi_normed.tsv"))
+
+save.image(file.path(params$data_dir, 'env.RData'))
 ```
 # limma
 ```{r, label='limma', cache=F}
@@ -311,7 +277,8 @@ contrasts <- makeContrasts(contrasts = contrast_strings, levels = mod)
 
 
 
-```{r, label='lmFit', cache=TRUE}
+```{r, label='lmFit', cache=F}
+knitr::knit_exit()
 fit <- limma::lmFit(mat, mod)
 fit <- contrasts.fit(fit, contrasts)
 fitres <- fit %>% limma::eBayes(robust = T, trend = T)

@@ -1,0 +1,248 @@
+---
+title: "1141-modi"
+author: "MSPC"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    highlight: zenburn
+    toc: yes
+    toc_float: false
+    self_contained: true
+params:
+  data_dir: NULL
+  metadata: NULL
+  config: "None"  # from python. make all the NULLs "None"?
+  modi_abbrev: ac # not used?
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 100% !important;
+  margin: auto;
+}
+</style>
+
+```{r setup, include=T}
+knitr::opts_chunk$set(echo = TRUE)
+suppressPackageStartupMessages(library(rlang))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(magrittr))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(reactable))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(here))
+library(dendsort)
+
+
+library(knitr)
+myreactable <- function(x, ...) reactable(x, defaultPageSize = 14, searchable = T, compact = T, resizable=T, sortable = T, filterable = T, ...)
+
+(here())
+
+OUTDIR <- params$outdir %||% params$data_dir %||% "."
+
+util_tools <- new.env()
+source( file.path(here("R", "utils.R")), local = util_tools )
+dist_no_na <- util_tools$dist_no_na
+myzscore <- util_tools$myzscore
+io_tools <- new.env()
+source( file.path(here("R", "io.R")), local = io_tools )
+
+# more fine grained params with defaults and validation
+config <- io_tools$get_config(params$config)
+
+knitr::opts_chunk$set(fig.path="modi-figures")
+
+
+
+```
+
+# load
+
+params:
+```{r, label=load_meta}
+(params)
+
+if (!is.null(params$metadata)){
+    meta <- read_tsv(params$metadata, show_col_types = FALSE)
+    if (!"group" %in% colnames(meta)) meta$group <- meta$name
+} else {
+  cat("no metadata passed, exiting")
+  knitr::knit_exit()
+}
+
+```
+
+```{r, label = view_meta}
+meta %>% myreactable
+```
+
+
+```{r, label=load_expr}
+
+if (!"expr_file" %in% colnames(meta)){
+  cat("not implemented yet, exiting")
+  knitr::knit_exit()
+}
+
+expr_files <- meta$expr_file %>% unique
+
+
+datas <- expr_files %>%
+    purrr::map( io_tools$read_expr )  %>%
+    purrr::set_names(expr_files)
+
+( names(datas) )
+
+```
+
+
+```{r, label='combine data'}
+
+data <- bind_rows(datas) # %>% dplyr::filter(!str_detect(protein, "\\|Cont_"))
+
+# data %<>% distinct(sitename, ENSP, parent, fifteenmer, .keep_all = T)
+# data %<>% distinct(sitename, parent, fifteenmer, hyperscore_best, .keep_all = T)
+
+dplyr::glimpse(data)
+
+# data %>% head() %>% myreactable()
+
+```
+
+
+# explore
+
+```{r, label='explore'}
+data %>%
+  group_by(expr_file) %>%
+  summarize(n = n()) %>%
+  arrange(-n)
+```
+
+```{r, label='explore2'}
+datal <- data %>%
+  pivot_longer(
+    cols = starts_with("TMT"), names_to = "expr_col"
+  ) %>%
+  left_join(meta)
+
+# datal %<>% dplyr::filter(!is.na(name))
+datal %>% dplyr::glimpse()
+```
+
+# normalize
+
+```{r, label='normalize', cache=F}
+# cacheing this is not working in Rmd
+.minval <- datal %>%
+  dplyr::filter(value > 0) %>%
+  pull(value) %>%
+  min()
+datal %<>%
+  group_by(name, recno, runno, searchno, label, taxon) %>%
+  mutate(
+    val_mednorm = (value + (.minval / 2)) / median(value, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    log2_val = log2(val_mednorm)
+  )  %>%
+  group_by(site_id) %>% mutate(zscore = util_tools$myzscore(log2_val)) %>% ungroup()
+
+counts <- datal %>%
+  dplyr::filter(!is.na(log2_val)) %>%
+  group_by(site_id) %>%
+  summarize(n=n()) %>%
+  arrange(-n)
+maxn <- min(max(counts$n), nrow(metadata))
+tokeep <- counts %>% filter(n == maxn)
+datal %<>% dplyr::filter(
+  site_id %in% tokeep$site_id
+)
+
+  # (counts)
+  # (maxn)
+# datal %>% head() %>% myreactable()
+```
+
+
+```{r, eval=T, label='batch correction'}
+
+do_combat <- function(datal){
+  data_wide <- datal %>%
+    pivot_wider(id_cols = site_id, names_from = name, values_from = log2_val)
+  mat <- data_wide[, meta$name] %>% as.matrix
+  rownames(mat) <-  data_wide$site_id
+  corrected_data <- sva::ComBat(dat = mat, batch = meta$recno %>% as.character )
+}
+if (!is.null(params$batch)){
+  combat_corrected <- do_combat(datal)
+  combat_corrected %<>% as.data.frame %>% rownames_to_column(var="site_id")
+  combat_correctedl <- combat_corrected %>% pivot_longer(-site_id, values_to = 'log2_val')
+  datal2 <- datal %>% left_join(combat_correctedl)
+  datal <- datal2
+  }
+
+```
+
+```{r, label='inspect data'}
+( datal %>%   nrow() )
+( datal %>%  distinct(spectra, .keep_all=T) %>% nrow() )
+( datal %>%  distinct(name, spectra, .keep_all=T) %>% nrow() )
+```
+
+## distributions
+
+```{r, label='distibrution1'}
+datal %>%
+  distinct(name, spectra, .keep_all=T) %>%
+  ggplot(aes(x = log2_val, col = name)) +
+  geom_density() +
+  facet_wrap(~group) +
+  theme(legend.position="none")
+
+```
+
+
+```{r, label='distibrution2'}
+datal %>%
+  distinct(name, spectra, .keep_all=T) %>%
+  ggplot(aes(x = log2_val, col = name)) +
+  geom_density() +
+  facet_wrap(~expr_file) + 
+  theme(legend.position="none")
+```
+
+
+
+```{r, 'distribution3'}
+datal %>%
+  distinct(name, spectra, .keep_all=T) %>%
+  ggplot(aes(x = log2_val, col = name)) +
+  geom_density() +
+  facet_wrap(~expr_file+AA) +
+  theme(legend.position="none")
+
+```
+
+
+
+
+```{r, label='pivot_wider'}
+# .id_cols <- c("fifteenmer", "ENSG", "ENSP", "geneid", "taxon", "position", "sitename", "id", "modi_id")
+#datal %>% dplyr::summarise(n = dplyr::n(), .by = c(fifteenmer, ENSG, ENSP, geneid, taxon, sitename, id, name))
+dataw <- datal %>%
+  pivot_wider(
+    id_cols = site_id,
+    names_from = name,
+    #values_fn = function(x) median(x, na.rm = T),
+    values_from = log2_val, # sometimes this happens after merging with phosphositeplus table
+  )
+dataw %>% write_tsv(file.path(OUTDIR, "modi_normed.tsv"))
+
+save.image(file.path(params$data_dir, 'env.RData'))
+```

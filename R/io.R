@@ -5,6 +5,7 @@ suppressPackageStartupMessages(library(purrr))
 suppressPackageStartupMessages(library(readr))
 suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(cmapR))
 
 
 
@@ -113,3 +114,75 @@ get_config <- function(file_path) {
 
   return(config$params)
 }
+
+read_expr <- function(.x){
+  df <- readr::read_tsv(.x,
+                        #  n_max=4000,
+                        show_col_types = FALSE
+                        ) %>%
+    mutate(expr_file = .x)
+  # mutate(modi_id = basename(id) %>% str_extract(pattern = "(sty|k)_[0-9]+_[0-9]+")) %>%
+
+  df %<>% mutate(sitename = if_else(is.na(sitename2), sitename, sitename2))
+  if ("geneid" %in% colnames(df)) df %<>% mutate(geneid = as.character(geneid))
+
+  if ("cst_cat#" %in% colnames(df)) df %<>% mutate(`cst_cat#` = as.character(`cst_cat#`))
+
+  if ("all_possible_positions" %in% colnames(df)) df$all_possible_positions <- NULL
+  if ("all_possible_positions_psp" %in% colnames(df)) df$all_possible_positions_psp <- NULL
+
+  if ("ms_lit" %in% colnames(df)) df %<>% mutate(`ms_lit` = replace_na(ms_lit, 0))
+  if ("lt_lit" %in% colnames(df)) df %<>% mutate(`lt_lit` = replace_na(lt_lit, 0))
+
+  if (!"fifteenmer" %in% colnames(df)) stop('fifteenmer missing')
+  if (!"ENSP" %in% colnames(df)) stop('ENSP missing, this is a protein id ')
+  if (!"sitename" %in% colnames(df)) stop('sitename missing')
+  if (!"taxon" %in% colnames(df)) df$taxon <- "<NULL>"
+  df %<>% mutate(site_id = str_c(sitename, ENSP, fifteenmer, sep='_'))
+
+  return(df)
+}
+
+
+
+
+export_datal_to_gct <- function(datal){
+
+    # 2.1. Create the Expression Matrix
+    # Select necessary columns: 'site_id' and expression values
+    # Here, 'name' represents the sample identifier
+
+    expression_matrix <- datal %>%
+      select(site_id, name, log2_val) %>%  # Ensure 'log2_val' is your expression value
+      pivot_wider(names_from = name, values_from = log2_val) %>%
+      column_to_rownames("site_id") %>%
+      as.matrix()
+
+    row_metadata <- datal %>%
+      select(site_id,
+             sitename,
+             lt_lit, ms_lit, ms_cst,
+             gene, acc_id, hu_chr_loc, mod_rsd, organism, mw_kd, domain, fifteenmer, ENSP, ENST, ENSG, geneid, taxon, symbol) %>%
+      distinct(site_id, .keep_all = TRUE) %>%
+      column_to_rownames("site_id")
+    row_metadata$id <- rownames(row_metadata)
+
+
+    # Example:
+    column_metadata <- meta %>%
+      select(name, any_of(c("cell", "time", "treatment", "group", "replicate"))) %>%
+      distinct(name, .keep_all = TRUE) %>%
+      column_to_rownames("name")
+    column_metadata$id <- rownames(column_metadata)
+
+    # 3.1. Create the GCT Object
+    gct_object <- new("GCT",
+      mat = expression_matrix,
+      rid = rownames(expression_matrix),
+      cid = colnames(expression_matrix),
+      rdesc = row_metadata,
+      cdesc = column_metadata
+    )
+    return(gct_object)
+}
+
