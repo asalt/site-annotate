@@ -49,15 +49,15 @@ source(file.path(here("R", "lazyloader.R")))
 OUTDIR <- params$output_dir %||% params$data_dir %||% "."
 
 util_tools <- get_tool_env("utils")
+heatmap_utils <- get_tool_env("heatmap")
+
 # source( file.path(here("R", "utils.R")), local = util_tools )
 dist_no_na <- util_tools$dist_no_na
 myzscore <- util_tools$myzscore
 io_tools <- get_tool_env("io")
-# io_tools <- new.env()
-# source( file.path(here("R", "io.R")), local = io_tools )
 
-# more fine grained params with defaults and validation
-config <- io_tools$load_config(params$config)
+# more fine grained params with defaults and validation if we need this
+# config <- io_tools$load_config(params$config)
 
 knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures"))
 
@@ -67,6 +67,7 @@ SAVE_ENVIRON <- params$save_environ %||% FALSE
 
 ```
 metadata should be a tsv file with an expr_file column
+config can have an entry "batch" for application of batch correction 
 ```
 
 # load

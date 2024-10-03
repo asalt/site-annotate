@@ -46,16 +46,18 @@ myreactable <- function(x, ...) reactable(x, defaultPageSize = 14, searchable = 
 (here())
 
 source(file.path(here("R", "lazyloader.R")))
+io_tools <- get_tool_env("io")
+heatmap_tools <- get_tool_env("heatmap")
+util_tools <- get_tool_env("utils")
 
 OUTDIR <- params$output_dir %||% params$data_dir %||% "."
+config_file <- params$config %||% file.path(here(), "config", "base.toml")
+config <- io_tools$load_config(config_file)
 
-# util_tools <- get_tool_env("utils")
 # dist_no_na <- util_tools$dist_no_na
 # myzscore <- util_tools$myzscore
-# io_tools <- get_tool_env("io")
 
 # more fine grained params with defaults and validation
-# config <- io_tools$load_config(params$config)
 
 knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures"))
 
@@ -70,8 +72,16 @@ metadata should be a tsv file with an expr_file column
 # load
 
 params:
-```{r, label=load_meta}
+```{r, label='show-params'}
 (params)
+```
+
+```{r, label='show-config'}
+(config)
+```
+
+
+```{r, label='load-gct'}
 
 if (!is.null(params$gct)){
     gct <- cmapR::parse_gctx(params$gct)
@@ -82,13 +92,38 @@ if (!is.null(params$gct)){
 
 ```
 
-```{r, label = view_meta}
+```{r, label = 'display-meta'}
 gct@cdesc %>% myreactable
 ```
 
+# explore
 
-```{r}
+## heatmap
+
+```{r, label='draw-heatmap'}
+.tokeep <- gct %>%
+  melt_gct() %>%
+  distinct(fifteenmer, .keep_all = T) %>%
+  pull(id.x)
+subgct <- gct %>% subset_gct(rid = .tokeep) # this is important to reduce redundancy, can be looked up later from other file
+gct_z <- util_tools$scale_gct(subgct, group_by = params$zscore_by)
+
+.outf <- file.path(OUTDIR, "heatmap_all.pdf")
+message(paste0('drawing ', .outf))
+cairo_pdf(.outf,
+    width = 12, 
+    height = 14
+    )
+ht <- heatmap_tools$make_heatmap_fromgct(gct_z)
+ComplexHeatmap::draw(ht)
+dev.off()
+
+```
+
+```{r, label = 'end'}
 if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'merge_modis.RData'))
 
+(loadedNamespaces())
+(version)
 
 ```

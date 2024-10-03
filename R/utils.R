@@ -105,3 +105,51 @@ dist_no_na <- function(mat) {
   edist <- dist(mat)
   return(edist)
 }
+
+scale_gct <- function(gct, group_by = NULL) {
+  # log_msg(msg="zscoring gct file by row")
+  # log_msg(msg=paste0("group_by is set to: ", group_by))
+  if (!is.null(group_by) && group_by == FALSE) group_by <- NULL
+  res <- gct %>%
+    melt_gct() %>%
+    {
+      # Conditionally add group_by
+      if (!is.null(group_by) && group_by != FALSE) {
+        group_by(., id.x, !!sym(group_by))
+      } else {
+        group_by(., id.x)
+      }
+    } %>%
+    dplyr::mutate(zscore = myzscore(value)) %>%
+    dplyr::ungroup()
+
+  # make a new gct and return
+  res <- res %>%
+    dplyr::select(id.x, id.y, zscore) %>%
+    tidyr::pivot_wider(names_from = id.y, values_from = zscore) %>%
+    as.data.frame()
+  rownames(res) <- res$id.x
+  res$id.x <- NULL
+  res <- as.matrix(res)
+  rdesc <- gct@rdesc
+  cdesc <- gct@cdesc
+
+  if (length(colnames(gct@rdesc)) == 1) {
+    rdesc["dummy"] <- "X"
+  }
+
+  if (length(colnames(res)) == 1) {
+    rdesc["dummy"] <- "X"
+  }
+
+  newgct <- new("GCT",
+    mat = res,
+    rid = rownames(res),
+    cid = colnames(res),
+    rdesc = rdesc[rownames(res), ],
+    cdesc = cdesc[colnames(res), ]
+  )
+
+  return(newgct)
+}
+

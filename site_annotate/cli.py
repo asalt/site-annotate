@@ -290,6 +290,7 @@ def report(template, config, data_dir, output_dir, metadata, gct, **kwargs):
         params_dict['gct'] = str(pathlib.Path(gct).absolute())
     if output_dir is None:
         output_dir = data_dir
+    output_dir = str(pathlib.Path(output_dir).absolute())
 
     #
 

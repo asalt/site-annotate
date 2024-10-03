@@ -13,6 +13,10 @@
 # Returns:
 #   A character vector sorted based on the numeric value after the first underscore.
 #   If no numeric part is found after the underscore, those strings are placed at the end.
+library(here)
+
+source(file.path(here(), "R", "lazyloader.R"))
+util_tools <- get_tool_env("utils")
 
 sort_by_number_after_underscore <- function(strings) {
   if (!is.character(strings)) {
@@ -124,6 +128,7 @@ condense_groups <- function(.mat) {
 #   Throws errors if required packages are missing or input data is invalid.
 
 do_plot <- function(df, comp_name, n = 60, datal, meta, OUTDIR, util_tools) {
+    # this is to be refactored. df is a dataframe of stat results. we should have a gct object to make the data loading easier
   # Load required libraries
   required_packages <- c("dplyr", "stringr", "ComplexHeatmap", "grid", "tidyr", "purrr", "dendsort")
   missing_packages <- setdiff(required_packages, rownames(installed.packages()))
@@ -384,4 +389,134 @@ do_plot <- function(df, comp_name, n = 60, datal, meta, OUTDIR, util_tools) {
 # Additional utility functions can be added below as needed.
 
 
+
+
+make_heatmap_fromgct <- function(
+    gct,
+    row_title = "",
+    column_title = "",
+    save_func = NULL,
+    cluster_rows = T,
+    cluster_columns = F,
+    color_mapper = NULL,
+    sample_order = NULL,
+    show_row_names = FALSE,
+    cut_by = NULL,
+    scale = T,
+    optimal_size = FALSE,
+    ...) {
+  # gct <- subgct
+  # gct@cdesc$treat <-
+  #   factor(.gct@cdesc$treat , levels = c("untreated", "carboplatin", "IMT", "carboplatin_IMT"), ordered = T)
+
+  if (!is.null(sample_order)) {
+    gct <- cmapR::subset_gct(gct, cid = sample_order)
+  }
+
+  # cat("make_heatmap\n")
+  ca <- NULL
+  .colors <- util_tools$create_named_color_list(gct@cdesc, c("group"))
+  if ("group" %in% colnames(gct@cdesc)) {
+    ca <- ComplexHeatmap::columnAnnotation(
+      group = gct@cdesc$group, # this needs to be dynamically set
+      col = .colors
+    )
+  }
+
+  .legend_width <- unit(6, "cm")
+  .cbar_title <- "zscore"
+  heatmap_legend_param <- list(
+    title = .cbar_title,
+    direction = "horizontal",
+    just = "bottom",
+    legend_width = .legend_width
+  )
+
+
+  # .note <- paste0(description, '\nNES ', sprintf("%.2f", NES), '  pvalue: ', pval)
+
+  if ("rdesc" %in% colnames(gct@rdesc)) {
+    row_labels <- gct@rdesc$rdesc
+  } else if ("genesymbol" %in% colnames(gct@rdesc)) {
+    row_labels <- gct@rdesc$genesymbol
+  } else {
+    row_labels <- gct@rid
+  }
+
+
+  .mat <- gct@mat
+  # gct@mat %>% apply( 1, function(x) scale(x, center = T, scale = scale)) %>% t() %>% as.matrix()),
+
+  heatmap_matrix_width  <- NULL
+  heatmap_matrix_height <- NULL
+  if (optimal_size == TRUE){
+    heatmap_matrix_width <- unit(ncol(.mat) * .2, "in")
+    heatmap_matrix_height <- unit(nrow(.mat) * .2, "in")
+  }
+
+  if (!is.null(cut_by) && cut_by %in% colnames(gct@cdesc)) {
+    cut_by <- gct@cdesc[[cut_by]]
+    cut_by <- factor(cut_by, levels = unique(cut_by))
+  } else {
+    cut_by <- NULL
+  }
+
+  ht <- ComplexHeatmap::Heatmap(
+    .mat,
+    width = heatmap_matrix_width,
+    height = heatmap_matrix_height,
+    # TODO use z_score_withna or other custom func for handling nas when scaling
+    show_row_names = show_row_names,
+    cluster_rows = cluster_rows,
+    cluster_columns = cluster_columns,
+    #
+
+    row_title = row_title,
+    column_title = column_title,
+
+    row_labels = row_labels,
+    column_labels = gct@cdesc$id, # id should always be here
+
+    column_split = cut_by,
+
+    top_annotation = ca,
+    heatmap_legend_param = heatmap_legend_param,
+    row_names_gp = grid::gpar(fontsize = 7),
+    column_names_gp = grid::gpar(fontsize = 7),
+    cluster_column_slices = FALSE,
+    column_names_side = "top",
+  )
+
+
+
+  # log_msg(debug = paste0("defining draw func"))
+  do_draw <- function() {
+    draw(ht,
+      heatmap_legend_side = "bottom",
+      padding = unit(c(2, 24, 2, 24), "mm"), # top, left, bottom, right
+    )
+  }
+
+  # log_msg(debug = paste0("save func: ", class(save_func) %>% as.character()))
+  # log_msg(debug = paste0("is null save func: ", is.null(save_func)))
+
+  height <- 4 + (nrow(.mat) * .20)
+  width <- 8 + (ncol(.mat) * .26)
+
+  if (!is.null(save_func)) {
+
+    # log_msg(debug = paste0("save func attrs before: "))
+    # log_msg(debug = paste0(names(get_args(save_func)), "-", get_args(save_func)))
+
+    save_func <- make_partial(save_func, height = height, width = width)
+
+    # log_msg(debug = paste0("save func attrs after: "))
+    # log_msg(debug = paste0(names(get_args(save_func)), "-", get_args(save_func)))
+
+    save_func(plot_code = do_draw)
+  }
+
+
+  return(ht)
+}
 
