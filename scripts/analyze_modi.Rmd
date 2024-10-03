@@ -1,0 +1,94 @@
+---
+title: "analyze_modi"
+author: "MSPC"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    highlight: zenburn
+    toc: yes
+    toc_float: false
+    self_contained: true
+params:
+  data_dir: NULL
+  output_dir: NULL
+  metadata: NULL
+  config: "None"  # from python. make all the NULLs "None"?
+  gct: NULL # not always used
+  modi_abbrev: ac # not used?
+  save_environ: false
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 100% !important;
+  margin: auto;
+}
+</style>
+
+```{r setup, include=T}
+knitr::opts_chunk$set(echo = TRUE)
+suppressPackageStartupMessages(library(rlang))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(magrittr))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(reactable))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(here))
+library(dendsort)
+
+
+library(knitr)
+myreactable <- function(x, ...) reactable(x, defaultPageSize = 14, searchable = T, compact = T, resizable=T, sortable = T, filterable = T, ...)
+
+(here())
+
+source(file.path(here("R", "lazyloader.R")))
+
+OUTDIR <- params$output_dir %||% params$data_dir %||% "."
+
+# util_tools <- get_tool_env("utils")
+# dist_no_na <- util_tools$dist_no_na
+# myzscore <- util_tools$myzscore
+# io_tools <- get_tool_env("io")
+
+# more fine grained params with defaults and validation
+# config <- io_tools$load_config(params$config)
+
+knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures"))
+
+SAVE_ENVIRON <- params$save_environ %||% FALSE
+
+```
+
+```
+metadata should be a tsv file with an expr_file column
+```
+
+# load
+
+params:
+```{r, label=load_meta}
+(params)
+
+if (!is.null(params$gct)){
+    gct <- cmapR::parse_gctx(params$gct)
+} else {
+  cat("no data passed, exiting")
+  knitr::knit_exit()
+}
+
+```
+
+```{r, label = view_meta}
+gct@cdesc %>% myreactable
+```
+
+
+```{r}
+if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'merge_modis.RData'))
+
+
+```

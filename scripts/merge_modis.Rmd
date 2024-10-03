@@ -14,7 +14,7 @@ params:
   output_dir: NULL
   metadata: NULL
   config: "None"  # from python. make all the NULLs "None"?
-  data: NULL # not always used
+  gct: NULL # not always used
   modi_abbrev: ac # not used?
 ---
 

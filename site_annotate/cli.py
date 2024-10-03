@@ -72,7 +72,7 @@ def common_options(f):
     f = click.option("-c", "--config", type=click.Path(exists=True, dir_okay=False))(f)
     f = click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False),
                         help="metadata with rec run search info used to associate with data"
-)( f)
+)(f)
     f = click.option(
         "-o",
         "--output-dir",
@@ -86,6 +86,14 @@ def common_options(f):
         "-d",
         "--data-dir",
         type=click.Path(exists=True, file_okay=False, dir_okay=True),
+        required=True,
+        default=pathlib.Path(".").absolute(),
+        show_default=True,
+    )(f)
+    f = click.option(
+        "-g",
+        "--gct",
+        type=click.Path(exists=True, file_okay=True, dir_okay=True),
         required=True,
         default=pathlib.Path(".").absolute(),
         show_default=True,
@@ -255,33 +263,43 @@ def validate_meta(metadata_file: pathlib.Path, data_dir: pathlib.Path):
     default="modi",
     show_default=True,
 )
-def report(template, config, data_dir, output_dir, metadata, **kwargs):
+def report(template, config, data_dir, output_dir, metadata, gct, **kwargs):
     print(template)
     template_file = REPORT_TEMPLATES[template]
 
+    params_dict = dict()
+
+
+
     if config is not None:
         config = pathlib.Path(config).absolute()
+        params_dict['config'] = str(config)
 
-    data_dir = pathlib.Path(data_dir).absolute()
-    metadata = pathlib.Path(metadata).absolute()
+    if data_dir is not None:
+        data_dir = pathlib.Path(data_dir).absolute()
+        params_dict['data_dir'] = str(data_dir)
+    if metadata is not None:
+        metadata = pathlib.Path(metadata).absolute()
+        # now we check if metadata is aligned with available experimental data
+        meta_validated = validate_meta(metadata, data_dir)
+        meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
+        meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
+        logger.info(f"wrote {meta_validated_fname}")
+        params_dict['metadata'] = str(meta_validated_fname)
+    if gct is not None:
+        params_dict['gct'] = str(pathlib.Path(gct).absolute())
     if output_dir is None:
         output_dir = data_dir
 
-    # now we check if metadata is aligned with available experimental data
-    # == move all of this to a separate function
-    meta_validated = validate_meta(metadata, data_dir)
-    meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
-    meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
-    logger.info(f"wrote {meta_validated_fname}")
     #
 
     # Create a dictionary with all parameters
-    params_dict = {
-        "config": str(config),  
-        "data_dir": str(data_dir),
+    params_dict.update({
+        # "config": str(config),  
+        # "data_dir": str(data_dir),
+        # "metadata": str(meta_validated_fname),
         "output_dir": str(output_dir),
-        "metadata": str(meta_validated_fname),
-    }
+    })
 
     for k, v in kwargs.items():
         params_dict[k] = v
