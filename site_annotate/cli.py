@@ -65,11 +65,14 @@ REPORT_TEMPLATES = get_templates(TEMPLATE_PATH)
 def show_templates(extended):
     for k, v in REPORT_TEMPLATES.items():
         print(k, v)
+    # end
 
 
 def common_options(f):
     f = click.option("-c", "--config", type=click.Path(exists=True, dir_okay=False))(f)
-    f = click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))( f)
+    f = click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False),
+                        help="metadata with rec run search info used to associate with data"
+)( f)
     f = click.option(
         "-o",
         "--output-dir",
@@ -274,11 +277,12 @@ def report(template, config, data_dir, output_dir, metadata, **kwargs):
 
     # Create a dictionary with all parameters
     params_dict = {
-        # "config": str(config),  # None strings will be interpreted correctly
+        "config": str(config),  
         "data_dir": str(data_dir),
-        # "output_dir": str(output_dir),
+        "output_dir": str(output_dir),
         "metadata": str(meta_validated_fname),
     }
+
     for k, v in kwargs.items():
         params_dict[k] = v
     params = "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"

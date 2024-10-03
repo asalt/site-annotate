@@ -78,7 +78,7 @@ is_null_config <- function(val, nullstrings = c("None", "")) {
   return(val)
 }
 
-get_config <- function(file_path) {
+load_config <- function(file_path) {
   # Read the config file
   if (!is.null(file_path) && file_path == "None") {
     file_path <- NULL
@@ -146,7 +146,7 @@ read_expr <- function(.x){
 
 
 
-export_datal_to_gct <- function(datal){
+create_gct_from_datal <- function(datal){
 
     # 2.1. Create the Expression Matrix
     # Select necessary columns: 'site_id' and expression values
