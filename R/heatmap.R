@@ -415,10 +415,11 @@ make_heatmap_fromgct <- function(
 
   # cat("make_heatmap\n")
   ca <- NULL
-  .colors <- util_tools$create_named_color_list(gct@cdesc, c("group"))
+  .colors <- util_tools$create_named_color_list(gct@cdesc, colnames(gct@cdesc))
   if ("group" %in% colnames(gct@cdesc)) {
     ca <- ComplexHeatmap::columnAnnotation(
-      group = gct@cdesc$group, # this needs to be dynamically set
+      #group = gct@cdesc$group, # this needs to be dynamically set
+      df = gct@cdesc,
       col = .colors
     )
   }
