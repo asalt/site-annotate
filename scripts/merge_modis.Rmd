@@ -83,6 +83,9 @@ if (!is.null(params$metadata)){
   knitr::knit_exit()
 }
 
+
+OUTNAME <- basename(params$metadata) %>% gsub("_validated.tsv$", "", .)
+
 ```
 
 ```{r, label = view_meta}
@@ -136,7 +139,7 @@ datal <- data %>%
   pivot_longer(
     cols = starts_with("TMT"), names_to = "expr_col"
   ) %>%
-  left_join(meta)
+  inner_join(meta)
 
 # datal %<>% dplyr::filter(!is.na(name))
 datal %>% dplyr::glimpse()
@@ -254,11 +257,11 @@ dataw <- datal %>%
     #values_fn = function(x) median(x, na.rm = T),
     values_from = log2_val, # sometimes this happens after merging with phosphositeplus table
   )
-dataw %>% write_tsv(file.path(OUTDIR, "modi_normed.tsv"))
+dataw %>% write_tsv(file.path(OUTDIR, paste0(OUTNAME, "_modi_normed.tsv")))
 
 gct <- datal %>% io_tools$create_gct_from_datal()
 
-gct %>% cmapR::write_gct(file.path(OUTDIR, "modi_normed"))
+gct %>% cmapR::write_gct(file.path(OUTDIR, paste0(OUTNAME, "_modi_normed")))
 
 
 if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'merge_modis.RData'))
