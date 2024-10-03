@@ -90,6 +90,8 @@ if (!is.null(params$gct)){
   knitr::knit_exit()
 }
 
+OUTNAME <- basename(params$gct)
+
 ```
 
 ```{r, label = 'display-meta'}
@@ -108,13 +110,18 @@ gct@cdesc %>% myreactable
 subgct <- gct %>% subset_gct(rid = .tokeep) # this is important to reduce redundancy, can be looked up later from other file
 gct_z <- util_tools$scale_gct(subgct, group_by = params$zscore_by)
 
-.outf <- file.path(OUTDIR, "heatmap_all.pdf")
+.outf <- file.path(OUTDIR, paste0(OUTNAME, "_heatmap_all.pdf"))
 message(paste0('drawing ', .outf))
 cairo_pdf(.outf,
-    width = 12, 
+    width = 16, 
     height = 14
     )
-ht <- heatmap_tools$make_heatmap_fromgct(gct_z)
+ht <- heatmap_tools$make_heatmap_fromgct(gct_z,
+        cut_by = config$heatmap$cut_by %||% NULL,
+        cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+        cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+        show_row_names = FALSE
+)
 ComplexHeatmap::draw(ht)
 dev.off()
 
