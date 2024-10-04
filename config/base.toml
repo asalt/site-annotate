@@ -3,19 +3,33 @@ batch = ""  # leave unspecified for null
 
 
 [params.heatmap]
+do = true
 cut_by = ""
+cluster_rows = true
+cluster_columns = false
+z_score = true
+z_score_by = ""
+legend_include = []
+legend_exclude = []
+
+
+[params.heatmap.selection]
+# does nothing if no files present
+do = true
+id_column = "id"
+file_list = [{}]
 
 [params.pca]
 do = true
 color = "group"
 marker = ""
 max_pc = 3
-top_n = 60
 
 [params.limma]
 do = true
 formula = "~0 + group"
-contrasts = ""
+contrasts = []
+top_n = [25, 50, 75, 100]
 
 [params.extra]
 sample_order = []

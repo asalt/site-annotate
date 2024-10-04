@@ -7,6 +7,22 @@ suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(cmapR))
 
+is_absolute_path <- function(path) {
+  # On Unix-like systems, an absolute path starts with '/'
+  # On Windows, it usually starts with a drive letter, like 'C:/'
+  if (.Platform$OS.type == "windows") {
+    return(grepl("^[A-Za-z]:[\\/]", path))
+  } else {
+    return(startsWith(path, "/"))
+  }
+}
+# Function to convert a file path to absolute if it's not already
+ensure_absolute_path <- function(file_path, root_dir) {
+  if (!is_absolute_path(file_path)) {
+    return(normalizePath(file.path(root_dir, file_path), mustWork = FALSE))
+  }
+  return(file_path)
+}
 
 
 convert_tmt_label <- function(shorthand) {
@@ -78,7 +94,7 @@ is_null_config <- function(val, nullstrings = c("None", "")) {
   return(val)
 }
 
-load_config <- function(file_path) {
+load_config <- function(file_path, root_dir = NULL) {
   # Read the config file
   if (!is.null(file_path) && file_path == "None") {
     file_path <- NULL
@@ -105,6 +121,8 @@ load_config <- function(file_path) {
   config$params$limma$contrasts <- is_null_config(config$params$limma$contrasts)
 
   config$params$heatmap$cut_by <- is_null_config(config$params$heatmap$cut_by)
+  config$params$heatmap$z_score <- config$params$heatmap$z_score %||% TRUE
+  config$params$heatmap$z_score_by %<>% is_null_config(.) %||% NULL
 
   if (is.null(config$params$advanced)) {
     config$params$advanced <- list()
@@ -112,6 +130,27 @@ load_config <- function(file_path) {
   config$params$advanced$replace <- is_null_config(config$params$advanced$replace) %||% FALSE
 
 
+  if (is.null(root_dir)) {
+    root_dir <- getwd()
+  }
+
+  # handle any lists of files that may have relative paths
+  if (is.null(config$params$heatmap$selection)){
+    config$params$heatmap$selection <- list()
+  }
+
+  if (!is.null(config$params$heatmap$selection$file_list)){
+    # iterate through each one and make sure the paths are defined as absolute
+    # the paths are the values of the list, the keys are the names for use for each file
+    # Use purrr::map to iterate through the file_list and convert paths to absolute
+    config$params$heatmap$selection$file_list <- map(
+      config$params$heatmap$selection$file_list,
+      function(file_entry) {
+        # Apply ensure_absolute_path function to each path in the file_entry
+        map(file_entry, ~ ensure_absolute_path(.x, root_dir))
+      }
+    )
+  }
   return(config$params)
 }
 

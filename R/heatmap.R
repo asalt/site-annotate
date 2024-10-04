@@ -518,6 +518,6 @@ make_heatmap_fromgct <- function(
   }
 
 
-  return(ht)
+  return(do_draw)
 }
 

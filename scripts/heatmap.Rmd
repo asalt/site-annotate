@@ -1,5 +1,5 @@
 ---
-title: "analyze_modi"
+title: "heatmap"
 author: "MSPC"
 date: "`r Sys.Date()`"
 output:
@@ -64,10 +64,9 @@ knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures"))
 SAVE_ENVIRON <- params$save_environ %||% FALSE
 
 ```
+create heatmap from input files
+very simple, only does one thing
 
-```
-metadata should be a tsv file with an expr_file column
-```
 
 # load
 
@@ -103,33 +102,46 @@ gct@cdesc %>% myreactable
 ## heatmap
 
 ```{r, label='draw-heatmap'}
-.tokeep <- gct %>%
-  melt_gct() %>%
-  distinct(fifteenmer, .keep_all = T) %>%
-  pull(id.x)
-subgct <- gct %>% subset_gct(rid = .tokeep) # this is important to reduce redundancy, can be looked up later from other file
-gct_z <- util_tools$scale_gct(subgct, group_by = params$zscore_by)
 
-.outf <- file.path(OUTDIR, paste0(OUTNAME, "_heatmap_all.pdf"))
-message(paste0('drawing ', .outf))
-cairo_pdf(.outf,
-    width = 16,
-    height = 14
-    )
-ht_draw_func <- heatmap_tools$make_heatmap_fromgct(gct_z,
-        cut_by = config$heatmap$cut_by %||% NULL,
-        cluster_rows = config$heatmap$cluster_rows %||% TRUE,
-        cluster_columns = config$heatmap$cluster_columns %||% FALSE,
-        show_row_names = FALSE
-)
-ht_draw_func() # sets some things at "draw"time
-# ComplexHeatmap::draw(ht)
-dev.off()
+
+draw_heatmap <- function(...){
+  .tokeep <- gct %>%
+    melt_gct() %>%
+    distinct(fifteenmer, .keep_all = T) %>%
+    pull(id.x)
+  subgct <- gct %>% subset_gct(rid = .tokeep) # this is important to reduce redundancy, can be looked up later from other file
+  gct_z <- util_tools$scale_gct(subgct, group_by = params$zscore_by)
+
+  .outf <- file.path(OUTDIR, paste0(OUTNAME, "_heatmap_all.pdf"))
+  message(paste0('drawing ', .outf))
+  cairo_pdf(.outf,
+      width = 16,
+      height = 14
+      )
+  ht_draw_func <- heatmap_tools$make_heatmap_fromgct(gct_z,
+          cut_by = config$heatmap$cut_by %||% NULL,
+          cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+          cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+          show_row_names = FALSE
+  )
+  ht_draw_func() # sets some things at "draw"time
+  # ComplexHeatmap::draw(ht)
+  dev.off()
+}
+
+params$heatmap$selection$file_list %>% imap(~{
+  the_file <- .x
+  name <- .y
+  print(name)
+  print(the_file)
+})
+
+
 
 ```
 
 ```{r, label = 'end'}
-if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'merge_modis.RData'))
+if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'heatmap_draw.RData'))
 
 (loadedNamespaces())
 (version)
