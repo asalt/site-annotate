@@ -6,6 +6,7 @@ suppressPackageStartupMessages(library(readr))
 suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(cmapR))
+suppressPackageStartupMessages(library(janitor))
 
 is_absolute_path <- function(path) {
   # On Unix-like systems, an absolute path starts with '/'
@@ -150,7 +151,12 @@ load_config <- function(file_path, root_dir = NULL) {
         map(file_entry, ~ ensure_absolute_path(.x, root_dir))
       }
     )
+    config$params$heatmap$selection$file_list <- purrr::list_flatten(config$params$heatmap$selection$file_list)
   }
+
+
+  config$params$advanced$replace <- config$params$advanced$replace  %||% FALSE
+
   return(config$params)
 }
 
@@ -182,7 +188,69 @@ read_expr <- function(.x){
   return(df)
 }
 
+maybe_match_arg <- function(arg, choices, several.ok = TRUE) {
+    tryCatch({
+      match.arg(arg, choices, several.ok = several.ok)
+    },
+    error = function(e) {
+      return(NULL)
+  })
+}
 
+get_file_reader <- function(the_file){
+  # first get the extension, then choose appropriat reader
+  ext <- tools::file_ext(the_file)
+  if (ext == "tsv" || ext == "txt"){
+    reader <- readr::read_tsv
+  }
+  if (ext == "csv"){
+    reader <- readr::read_csv
+  }
+  if (ext == "xlsx"){
+    reader <- readxl::read_xlsx
+  }
+  return(reader)
+}
+
+read_genelist_file <- function(file_path,
+                               id_col = "id",
+                                possible_id_cols = c("id", "GeneID", "gene"),
+                                possible_contrast_cols = c("contrast", "group"),
+                                 ...){
+  # Read the file
+  reader <- get_file_reader(file_path)
+  df <- reader(file_path, show_col_types = FALSE) %>% janitor::clean_names()
+
+  if (!id_col %in% colnames(df)) {
+    for (possible_id_col in possible_id_cols) {
+      if (possible_id_col %in% colnames(df)) {
+        id_col <- possible_id_col
+        df[["id"]] <- df[[id_col]]
+        break
+      }
+    }
+  }
+
+  # now sort by another column if it exists
+  possible_col_for_sort <-maybe_match_arg(colnames(df), c("pvalue", "p_value"), several.ok = TRUE)
+  if (!is.null(possible_col_for_sort)) {
+    if (length(possible_col_for_sort) > 1) possible_col_for_sort <- possible_col_for_sort[1]
+    df <- df %>% arrange(!!sym(possible_col_for_sort))
+  }
+
+  possible_col_for_facet <- maybe_match_arg(colnames(df), possible_contrast_cols, several.ok = TRUE)
+  if (!is.null(possible_col_for_facet)) {
+    if (length(possible_col_for_facet) > 1) possible_col_for_facet <- possible_col_for_facet[1]
+    vals <- unique(df[[possible_col_for_facet]])
+    df <- purrr::map(vals,
+      ~ df %>% filter(!!sym(possible_col_for_facet) == .x)
+    ) %>% set_names(vals)
+  }
+
+  return(df)
+
+
+}
 
 
 create_gct_from_datal <- function(datal){
@@ -201,7 +269,12 @@ create_gct_from_datal <- function(datal){
       select(site_id,
              sitename,
              lt_lit, ms_lit, ms_cst,
-             gene, acc_id, hu_chr_loc, mod_rsd, organism, mw_kd, domain, fifteenmer, ENSP, ENST, ENSG, geneid, taxon, symbol) %>%
+             gene, acc_id, hu_chr_loc, mod_rsd, organism, mw_kd, domain, fifteenmer, ENSP, ENST, ENSG, geneid, taxon, symbol,
+             AA,
+             protein_start,
+             protein_end,
+             protein_start_psp
+             ) %>%
       distinct(site_id, .keep_all = TRUE) %>%
       column_to_rownames("site_id")
     row_metadata$id <- rownames(row_metadata)
@@ -209,7 +282,7 @@ create_gct_from_datal <- function(datal){
 
     # Example:
     column_metadata <- meta %>%
-      select(name, any_of(c("cell", "time", "treatment", "group", "replicate"))) %>%
+      # select(name, any_of(c("cell", "time", "treatment", "group", "replicate"))) %>%
       distinct(name, .keep_all = TRUE) %>%
       column_to_rownames("name")
     column_metadata$id <- rownames(column_metadata)
