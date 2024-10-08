@@ -1,3 +1,4 @@
+suppressPackageStartupMessages(library(tidyr))
 
 normalize <- function(datal, id_col = "site_id") {
   # Ensure that 'id_col' exists in 'datal'
@@ -55,7 +56,7 @@ normalize <- function(datal, id_col = "site_id") {
 create_named_color_list <- function(df, columns) {
   # Matplotlib default colors (from memory)
   matplotlib_colors <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-                         "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+                         "#9467bd", "#8c564b", "#e377c2",
                          "#bcbd22", "#17becf")
 
   # Initialize an empty list to store the result
@@ -63,11 +64,23 @@ create_named_color_list <- function(df, columns) {
 
   # Iterate over each column
   for (col_name in columns) {
+    df[[col_name]] <-  df[[col_name]] %>% replace_na("NA")
     unique_vals <- unique(df[[col_name]])
+    message(paste0('unique values are ', unique_vals))
     n_vals <- length(unique_vals)
 
     # Assign colors based on the number of unique values, recycling matplotlib colors if needed
     colors_assigned <- rep(matplotlib_colors, length.out = n_vals)
+    color_map <- setNames(colors_assigned, unique_vals)
+
+
+    if ("NA" %in% unique_vals) {
+      color_map["NA"] <- "#646464"
+    }
+    if ("NULL" %in% unique_vals) {
+      color_map["NULL"] <- "#646464"
+    }
+
 
     # Create a named vector for the unique values with corresponding colors
     color_list[[col_name]] <- setNames(colors_assigned, unique_vals)
@@ -87,7 +100,7 @@ myzscore <- function(value, minval = NA, remask = TRUE) {
 
   value[is.na(value)] <- minval
   # todo make smaller than min val
-  out <- scale(value)
+  out <- scale(value, center = TRUE, scale = TRUE) # these are defaults, just being explicit
 
   # if all NA:
   if (sum(!is.finite(out)) == length(out)) {
@@ -151,5 +164,85 @@ scale_gct <- function(gct, group_by = NULL) {
   )
 
   return(newgct)
+}
+
+infer_ordered_factor <- function(column) {
+  # Function to infer ordering for a given column vector
+
+  # Extract numeric values from strings
+  numeric_values <- as.numeric(gsub("[^0-9.-]+", "", column))
+
+  # Find the minimum numeric value
+  min_num <- min(numeric_values, na.rm = TRUE)
+  if (is.infinite(min_num)) {
+    min_num <- 0  # Default to 0 if no numeric values are found
+  }
+
+  # Initialize order values with numeric values
+  order_values <- numeric_values
+
+  # Indices of non-numeric values
+  non_numeric_indices <- which(is.na(order_values))
+
+  if (length(non_numeric_indices) > 0) {
+    non_numeric_values <- tolower(column[non_numeric_indices])
+
+    # Assign special order value for "veh" or "vehicle"
+    is_vehicle <- grepl("^veh$|^vehicle$", non_numeric_values)
+    order_values[non_numeric_indices[is_vehicle]] <- min_num - 2  # Highest priority
+
+    # Assign next priority to other non-numeric values
+    order_values[non_numeric_indices[!is_vehicle]] <- min_num - 1
+  }
+
+  # Create a data frame for sorting
+  df <- data.frame(
+    original_value = column,
+    order_value = order_values,
+    stringsAsFactors = FALSE
+  )
+
+  # Remove duplicates while preserving order
+  df_unique <- df[!duplicated(df$original_value), ]
+
+  # Sort the data frame by order_value
+  df_ordered <- df_unique[order(df_unique$order_value), ]
+
+  # Create an ordered factor with levels in the sorted order
+  ordered_factor <- factor(
+    column,
+    levels = df_ordered$original_value,
+    ordered = TRUE
+  )
+
+  return(ordered_factor)
+}
+
+
+filter_observations <- function(df, column, threshold_value) {
+  # Validate threshold_value
+  if (!is.numeric(threshold_value) || threshold_value <= 0) {
+    stop("threshold_value should be a positive numeric value")
+  }
+
+  # Group by site_id and the specified column, then count observations
+  counts <- df %>%
+    dplyr::filter(!is.na(log2_val)) %>%
+    dplyr::group_by(site_id, .data[[column]]) %>%
+    dplyr::summarize(n = n(), .groups = 'drop')
+
+  # Determine if threshold is an absolute count or a fraction
+  if (threshold_value < 1) {
+    threshold <- threshold_value * max(counts$n)
+  } else {
+    threshold <- threshold_value
+  }
+
+  # Filter groups that meet or exceed the threshold
+  tokeep <- counts %>% dplyr::filter(n >= threshold)
+
+  # Filter the original dataframe to keep only the desired site_ids
+  df_filtered <- df %>% dplyr::filter(site_id %in% tokeep$site_id)
+  return(df_filtered)
 }
 

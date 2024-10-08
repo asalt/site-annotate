@@ -10,12 +10,13 @@ output:
     toc_float: false
     self_contained: true
 params:
+  root_dir: NULL
   data_dir: NULL
   output_dir: NULL
   metadata: NULL
   config: "None"  # from python. make all the NULLs "None"?
   gct: NULL # not always used
-  modi_abbrev: ac # not used?
+  save_environ: false
 ---
 
 <style type="text/css">
@@ -66,8 +67,19 @@ SAVE_ENVIRON <- params$save_environ %||% FALSE
 
 ```
 metadata should be a tsv file with an expr_file column
-config can have an entry "batch" for application of batch correction 
+config can have an entry "batch" for application of batch correction
 ```
+
+
+```{r}
+
+fix_title <- function(x){
+  x %>% basename() %>% gsub('_', ' ', .) %>% tools::file_path_sans_ext() %>% str_wrap(width = 24)
+}
+
+
+```
+
 
 # load
 
@@ -82,7 +94,6 @@ if (!is.null(params$metadata)){
   cat("no metadata passed, exiting")
   knitr::knit_exit()
 }
-
 
 OUTNAME <- basename(params$metadata) %>% gsub("_validated.tsv$", "", .)
 
@@ -104,7 +115,7 @@ expr_files <- meta$expr_file %>% unique
 
 datas <- expr_files %>%
     purrr::map( io_tools$read_expr )  # %>%
-    # purrr::set_names(expr_files)
+    purrr::set_names(expr_files)
 
 ( names(datas) )
 
@@ -118,7 +129,7 @@ data <- bind_rows(datas) # %>% dplyr::filter(!str_detect(protein, "\\|Cont_"))
 # data %<>% distinct(sitename, ENSP, parent, fifteenmer, .keep_all = T)
 # data %<>% distinct(sitename, parent, fifteenmer, hyperscore_best, .keep_all = T)
 
-dplyr::glimpse(data)
+# dplyr::glimpse(data)
 
 # data %>% head() %>% myreactable()
 
@@ -127,12 +138,82 @@ dplyr::glimpse(data)
 
 # explore
 
+
+## counting
+
+
 ```{r, label='explore'}
+
 data %>%
+  distinct(spectra, .keep_all = T) %>%
   group_by(expr_file) %>%
   summarize(n = n()) %>%
   arrange(-n)
+
 ```
+
+
+```{r}
+
+data %>%
+  distinct(spectra, .keep_all = T) %>% 
+  mutate(expr_file = fix_title(expr_file)) %>%
+  ggplot(mapping = aes(x=expr_file, y = hyperscore_best, fill = AA)) +
+  geom_violin() +
+  facet_wrap(~expr_file, scales = "free_x") +
+  theme_minimal()
+  
+
+```
+
+
+
+## counts
+```{r}
+
+.counts <- data %>%
+  distinct(spectra, AA, .keep_all = T) %>%
+  group_by(expr_file, AA) %>%
+  summarize(n = n()) %>%
+  arrange(-n) %>%
+  ungroup
+
+.counts %>%  
+  mutate(expr_file = fix_title(expr_file)) %>%
+  ggplot(aes(x = AA, y = n, fill = AA)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ expr_file, scales = "fixed", nrow=ceiling(length(unique(.counts$expr_file)) / 4)) +
+  theme_minimal() +
+  labs(title = "Max Spectral Count by Amino Acid", x = "Amino Acid", y = "Count")
+
+```
+```{r, label='barplot no ambiguity'} 
+
+# Removing ambiguous sites
+cleaned_data <- data %>%
+  group_by(spectra) %>%
+  filter(n_distinct(AA) == 1) %>%  # Keep only non-ambiguous spectra (those with one distinct AA)
+  distinct(spectra, .keep_all = T) %>%
+  ungroup()
+
+# Re-run the summarization on the cleaned data
+cleaned_plot_data <- cleaned_data %>%
+  group_by(expr_file, AA) %>%
+  summarize(n = n()) %>%
+  arrange(-n)
+
+# Re-plot the barplot
+cleaned_plot_data %>%
+  mutate(expr_file = fix_title(expr_file)) %>%
+ggplot(mapping = aes(x = AA, y = n, fill = AA)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ expr_file, scales = "fixed", nrow=ceiling(length(unique(.counts$expr_file)) / 4)) +
+  theme_minimal() +
+  labs(title = "Non-Ambiguous Spectra Count by Amino Acid", x = "Amino Acid", y = "Count")
+
+```
+        
+
 
 ```{r, label='explore2'}
 datal <- data %>%
@@ -142,7 +223,7 @@ datal <- data %>%
   inner_join(meta)
 
 # datal %<>% dplyr::filter(!is.na(name))
-datal %>% dplyr::glimpse()
+# datal %>% dplyr::glimpse()
 ```
 
 # normalize
@@ -165,21 +246,28 @@ datal %<>%
   )  %>%
   group_by(site_id) %>% mutate(zscore = util_tools$myzscore(log2_val)) %>% ungroup()
 
-counts <- datal %>%
-  dplyr::filter(!is.na(log2_val)) %>%
-  group_by(site_id) %>%
-  summarize(n=n()) %>%
-  arrange(-n)
-maxn <- min(max(counts$n), nrow(metadata))
-tokeep <- counts %>% filter(n == maxn)
-datal %<>% dplyr::filter(
-  site_id %in% tokeep$site_id
-)
-
+    
+ 
+# counts <- datal %>%
+#   dplyr::filter(!is.na(log2_val)) %>%
+#   group_by(site_id, expr_file ) %>%
+#   summarize(n=n()) %>%
+#   arrange(-n)
+# 
+# keep <- 
+# .counts$expr_file
+# 
+# 
+# maxn <- min(max(counts$n), nrow(metadata))
+# tokeep <- counts %>% filter(n >= maxn)
+# datal %<>% dplyr::filter(
+#   site_id %in% tokeep$site_id
+# )
+# 
   # (counts)
   # (maxn)
 # datal %>% head() %>% myreactable()
-datal 
+datal %<>% util_tools$filter_observations(., "plex", .5)
 ```
 
 
@@ -190,6 +278,9 @@ do_combat <- function(datal, col="plex"){
     pivot_wider(id_cols = site_id, names_from = name, values_from = log2_val)
   mat <- data_wide[, meta$name] %>% as.matrix
   rownames(mat) <-  data_wide$site_id
+  .minval <- min(mat, na.rm = T)
+  mat[is.na(mat)] <- .minval/2
+
   corrected_data <- sva::ComBat(dat = mat, batch = meta[[col]] %>% as.character )
 }
 if (!is.null(config$batch)){
@@ -209,7 +300,7 @@ if (!is.null(config$batch)){
 ( datal %>%  distinct(name, spectra, .keep_all=T) %>% nrow() )
 ```
 
-## distributions 
+## distributions
 
 
 ```{r, label='distibrution1', fig.width=8}
@@ -228,7 +319,7 @@ datal %>%
   distinct(name, spectra, .keep_all=T) %>%
   ggplot(aes(x = log2_val, col = name)) +
   geom_density(alpha=.4) +
-  facet_wrap(~expr_file) + 
+  facet_wrap(~expr_file) +
   theme(legend.position="none")
 ```
 
