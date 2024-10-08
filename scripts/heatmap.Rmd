@@ -47,19 +47,18 @@ myreactable <- function(x, ...) reactable(x, defaultPageSize = 14, searchable = 
 
 source(file.path(here("R", "lazyloader.R")))
 io_tools <- get_tool_env("io")
-heatmap_tools <- get_tool_env("heatmap")
 util_tools <- get_tool_env("utils")
 
 OUTDIR <- params$output_dir %||% params$data_dir %||% "."
 config_file <- params$config %||% file.path(here(), "config", "base.toml")
-config <- io_tools$load_config(config_file)
+config <- io_tools$load_config(config_file, root_dir = params$root_dir)
 
 # dist_no_na <- util_tools$dist_no_na
 # myzscore <- util_tools$myzscore
 
 # more fine grained params with defaults and validation
 
-knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures"))
+knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures/"))
 
 SAVE_ENVIRON <- params$save_environ %||% FALSE
 
@@ -70,14 +69,6 @@ very simple, only does one thing
 
 # load
 
-params:
-```{r, label='show-params'}
-(params)
-```
-
-```{r, label='show-config'}
-(config)
-```
 
 
 ```{r, label='load-gct'}
@@ -89,7 +80,7 @@ if (!is.null(params$gct)){
   knitr::knit_exit()
 }
 
-OUTNAME <- basename(params$gct)
+OUTNAME <- basename(params$gct) %>% gsub("_n\\d+x\\d+\\.gct", "", .)
 
 ```
 
@@ -101,8 +92,9 @@ gct@cdesc %>% myreactable
 
 ## heatmap
 
-```{r, label='draw-heatmap'}
+```{r, label='draw-heatmap', cache=FALSE}
 
+heatmap_tools <- get_tool_env("heatmap")
 
 draw_heatmap <- function(...){
   .tokeep <- gct %>%
@@ -122,22 +114,131 @@ draw_heatmap <- function(...){
           cut_by = config$heatmap$cut_by %||% NULL,
           cluster_rows = config$heatmap$cluster_rows %||% TRUE,
           cluster_columns = config$heatmap$cluster_columns %||% FALSE,
-          show_row_names = FALSE
+          show_row_names = TRUE
   )
   ht_draw_func() # sets some things at "draw"time
   # ComplexHeatmap::draw(ht)
   dev.off()
 }
+```
 
-params$heatmap$selection$file_list %>% imap(~{
-  the_file <- .x
-  name <- .y
-  print(name)
-  print(the_file)
-})
+```{r, label='draw-heatmaps'}
 
 
+gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by)
 
+
+param_grid <- expand.grid(
+  cut_by = config$heatmap$cut_by %||% NULL,
+  cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+  cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+  top_n = config$heatmap$selection$top_n %||% c(20, 40, 60)
+  )
+  print(param_grid)
+
+config$heatmap$selection$file_list %>%
+  flatten %>%
+  imap(~{
+    the_file <- .x
+    name <- .y
+    if (!file.exists(the_file)){
+      message(paste0("file ", the_file, " does not exist"))
+      return(NULL)
+    }
+
+    print(name)
+    print(the_file)
+    #
+
+    file_data <- io_tools$read_genelist_file(the_file)
+    # Handle file_data if it's a dataframe or list of dataframes
+    # Convert to list with original name if it's a single dataframe
+    if (is.data.frame(file_data)) file_data <- list("a" = file_data)
+
+    param_grid <- expand.grid(
+      cut_by = config$heatmap$cut_by %||% NULL,
+      cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+      cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+      top_n = config$heatmap$selection$top_n %||% c(20, 40, 60)
+      # file_data = file_data
+      )
+      print(param_grid)
+
+    file_data %>% purrr::imap(~{
+      file_data_name <- .y
+      subname <- paste0(name, "_", file_data_name)
+      column_title <- paste0(OUTNAME, "\ncontrast: ", subname)
+      file_data_val <- .x
+
+      param_grid %>% purrr::pmap(~{
+        cut_by_val <- ..1
+        cluster_rows_val <- ..2
+        cluster_columns_val <- ..3
+        top_n_val <- ..4
+
+        subsel <- file_data_val # unless we want to filter further by possible column values
+        if ("t_value" %in% colnames(file_data_val)){
+          .top_tvals <- file_data_val %>% distinct(t_value) %>% head(n = top_n_val) %>% pull(t_value)
+          subsel <- file_data_val %>% filter(t_value %in% .top_tvals)
+        }
+        print(file_data_val)
+
+
+        if (nrow(subsel) == 0){
+          message(paste0("no rows in ", subname))
+          return(NULL)
+        }
+
+        subgct_z <- gct_z %>% subset_gct(rid = subsel$id)
+        .nrow <- nrow(subgct_z@mat)
+        .ncol <- ncol(subgct_z@mat)
+        .outdir <- file.path(OUTDIR, "heatmaps")
+        if (!is.null(cut_by_val)) .outdir <- file.path(.outdir, paste0('cut_',cut_by_val))
+        if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
+        .outf <- file.path(.outdir, make.names(paste0(OUTNAME, 
+         subname, "_",
+          .nrow, 'x', .ncol,
+          "_cut_", cut_by_val,
+          "cr_", cluster_rows_val,
+          "cc_", cluster_columns_val,
+            ".pdf")))
+
+        ht_draw_code <- heatmap_tools$make_heatmap_fromgct(
+          gct = subgct_z,
+          column_title = column_title,
+          cut_by = cut_by_val,
+          cluster_rows = cluster_rows_val,
+          cluster_columns = cluster_columns_val,
+          # cut_by = config$heatmap$cut_by %||% NULL,
+          # cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+          # cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+          meta_to_include = config$heatmap$legend_include %||% NULL,
+          meta_to_exclude = config$heatmap$legend_exclude %||% NULL,
+          show_row_names = TRUE,
+          optimal_size = TRUE
+          )
+        height <- 6 + (.nrow * .20)
+        width <- 12 + (.ncol * .26)
+
+
+        message(paste0('drawing ', .outf))
+        if (file.exists(.outf) && config$advanced$replace == FALSE){
+          message(paste0(.outf, " already exists, skipping"))
+          return(NULL)
+        }
+        tryCatch(
+          {
+            cairo_pdf(.outf, width = width, height = height)
+            ht_draw_code()
+            dev.off()
+          },
+          error = function(e) print(e)
+        )
+
+      }) #   end fo pmap
+    })  # end of imap
+    #
+  })
 ```
 
 ```{r, label = 'end'}
@@ -146,4 +247,16 @@ if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'heatmap_draw.RData'))
 (loadedNamespaces())
 (version)
 
+```
+
+
+
+params:
+```{r, label='show-params'}
+(params)
+```
+
+config:
+```{r, label='show-config'}
+(config)
 ```

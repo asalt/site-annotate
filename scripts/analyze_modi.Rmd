@@ -90,7 +90,7 @@ if (!is.null(params$gct)){
   knitr::knit_exit()
 }
 
-OUTNAME <- basename(params$gct)
+OUTNAME <- basename(params$gct) %>% gsub("_n\\d+x\\d+\\.gct", "", .)
 
 ```
 
@@ -110,22 +110,45 @@ gct@cdesc %>% myreactable
 subgct <- gct %>% subset_gct(rid = .tokeep) # this is important to reduce redundancy, can be looked up later from other file
 gct_z <- util_tools$scale_gct(subgct, group_by = params$zscore_by)
 
-.outf <- file.path(OUTDIR, paste0(OUTNAME, "_heatmap_all.pdf"))
-message(paste0('drawing ', .outf))
-cairo_pdf(.outf,
-    width = 16,
-    height = 14
-    )
-ht_draw_func <- heatmap_tools$make_heatmap_fromgct(gct_z,
-        cut_by = config$heatmap$cut_by %||% NULL,
-        cluster_rows = config$heatmap$cluster_rows %||% TRUE,
-        cluster_columns = config$heatmap$cluster_columns %||% FALSE,
-        show_row_names = FALSE
-)
-ht_draw_func() # sets some things at "draw"time
-# ComplexHeatmap::draw(ht)
-dev.off()
 
+cut_by <- c(NULL)
+if (!is.null(config$heatmap$cut_by)){
+    cut_by <- config$heatmap$cut_by
+}
+print(paste0('cut by is: ', cut_by))
+
+cut_by %>% purrr::map(~{
+    .cut_by  <- .x
+    print(cut_by)
+    .outf <- file.path(OUTDIR,
+            paste0(OUTNAME, "_heatmap_all_", 
+            "cut_",
+            .cut_by,
+            nrow(gct_z@mat),
+            "x",
+            ncol(gct_z@mat),
+            ".pdf"))
+    message(paste0('drawing ', .outf))
+    cairo_pdf(.outf,
+        width = config$heatmap$fig_width %||% 9,
+        height = config$heatmap$fig_height %||% 11
+        )
+    ht_draw_func <- heatmap_tools$make_heatmap_fromgct(gct_z,
+            cut_by = .cut_by,
+            cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+            cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+            show_row_names = FALSE,
+            include_row_annotations = FALSE,
+            column_title = make.names(basename(params$gct) %>% gsub("_n\\d+x\\d+\\.gct", "", .)),
+            meta_to_include = config$heatmap$legend_include %||% NULL,
+            meta_to_exclude = config$heatmap$legend_exclude %||% NULL,
+
+    )
+    ht <- ht_draw_func() # sets some things at "draw"time
+    # ComplexHeatmap::draw(ht)
+    dev.off()
+    return(ht)
+})
 ```
 
 ```{r, label = 'end'}
