@@ -69,14 +69,22 @@ def show_templates(extended):
 
 
 def common_options(f):
-    f = click.option("-c", "--config", type=click.Path(exists=True, dir_okay=False))(f)
-    f = click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False),
-                        help="metadata with rec run search info used to associate with data"
-)(f)
+    f = click.option(
+        "-c",
+        "--config",
+        type=click.Path(exists=True, dir_okay=False),
+        help=".toml file with additional parameters for report",
+    )(f)
+    f = click.option(
+        "-m",
+        "--metadata",
+        type=click.Path(exists=True, dir_okay=False),
+        help="tsv file with rec run search info used to associate with data",
+    )(f)
     f = click.option(
         "-o",
         "--output-dir",
-        type=click.Path(exists=True, file_okay=False, dir_okay=True),
+        type=click.Path(exists=False, file_okay=False, dir_okay=True),
         required=False,
         default=None,
         show_default=True,
@@ -94,9 +102,26 @@ def common_options(f):
         "-g",
         "--gct",
         type=click.Path(exists=True, file_okay=True, dir_okay=True),
+        required=False,
+        default=None,
+        show_default=True,
+    )(f)
+    f = click.option(
+        "-r",
+        "--root-dir",
+        type=click.Path(exists=True, file_okay=False, dir_okay=True),
         required=True,
         default=pathlib.Path(".").absolute(),
         show_default=True,
+        help="Root directory, default is location of command invocation",
+    )(f)
+    f = click.option(
+        "--save-environ",
+        type=click.BOOL,
+        required=False,
+        default=False,
+        show_default=True,
+        help="save r environ to output directory",
     )(f)
     return f
 
@@ -178,12 +203,19 @@ def validate_metadata(df: pd.DataFrame):
 
 
 def find_expr_file(rec_run_search: str, data_dir):
+    """
+    data_dir should be absolute path by this point
+    """
     search_pattern = os.path.join(data_dir, f"{rec_run_search}*reduced*tsv")
     results = glob.glob(search_pattern)
     if len(results) == 0:
         logger.warning(f"no files found for {rec_run_search} in {data_dir}")
+        raise FileNotFoundError(f"no files found for {rec_run_search} in {data_dir}")
     if len(results) > 1:
         logger.warning(
+            f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
+        )
+        raise FileNotFoundError(
             f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
         )
     if len(results) == 1:
@@ -195,6 +227,7 @@ def find_expr_files(rec_run_searches, data_dir):
 
 
 def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
+    """ """
     for rrs, expr_file in rec_run_searches.items():
         rec, run, search = rrs.split("_")
 
@@ -227,7 +260,7 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
                 ix = meta_df[
                     (meta_df["rec_run_search"] == rrs) & (meta_df["label"] == label)
                 ].index
-                assert(len(ix)) == 1
+                assert (len(ix)) == 1
                 ix = ix[0]
                 meta_df.loc[ix, "expr_col"] = expr_col
                 meta_df.loc[ix, "expr_file"] = expr_file
@@ -238,6 +271,9 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
 
 
 def validate_meta(metadata_file: pathlib.Path, data_dir: pathlib.Path):
+    """
+    top level function to validate metadata
+    """
 
     reader = get_reader(str(metadata_file))
     meta_df = reader(metadata_file)
@@ -263,21 +299,29 @@ def validate_meta(metadata_file: pathlib.Path, data_dir: pathlib.Path):
     default="modi",
     show_default=True,
 )
-def report(template, config, data_dir, output_dir, metadata, gct, **kwargs):
+def report(
+    template,
+    config,
+    data_dir,
+    output_dir,
+    metadata,
+    gct,
+    root_dir,
+    save_environ=False,
+    **kwargs,
+):
     print(template)
     template_file = REPORT_TEMPLATES[template]
 
     params_dict = dict()
 
-
-
     if config is not None:
         config = pathlib.Path(config).absolute()
-        params_dict['config'] = str(config)
+        params_dict["config"] = str(config)
 
     if data_dir is not None:
         data_dir = pathlib.Path(data_dir).absolute()
-        params_dict['data_dir'] = str(data_dir)
+        params_dict["data_dir"] = str(data_dir)
     if metadata is not None:
         metadata = pathlib.Path(metadata).absolute()
         # now we check if metadata is aligned with available experimental data
@@ -285,22 +329,29 @@ def report(template, config, data_dir, output_dir, metadata, gct, **kwargs):
         meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
         meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
         logger.info(f"wrote {meta_validated_fname}")
-        params_dict['metadata'] = str(meta_validated_fname)
+        params_dict["metadata"] = str(meta_validated_fname)
     if gct is not None:
-        params_dict['gct'] = str(pathlib.Path(gct).absolute())
+        params_dict["gct"] = pathlib.Path(gct).absolute()
     if output_dir is None:
         output_dir = data_dir
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
     output_dir = str(pathlib.Path(output_dir).absolute())
 
     #
 
     # Create a dictionary with all parameters
-    params_dict.update({
-        # "config": str(config),  
-        # "data_dir": str(data_dir),
-        # "metadata": str(meta_validated_fname),
-        "output_dir": str(output_dir),
-    })
+    params_dict.update(
+        {
+            # "config": str(config),
+            # "data_dir": str(data_dir),
+            # "metadata": str(meta_validated_fname),
+            "output_dir": str(output_dir),
+            "root_dir": str(root_dir),
+            "save_environ": str.lower(str(save_environ)),
+        }
+    )
 
     for k, v in kwargs.items():
         params_dict[k] = v
