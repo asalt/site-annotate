@@ -1,5 +1,6 @@
 suppressPackageStartupMessages(library(tidyr))
 
+
 normalize <- function(datal, id_col = "site_id") {
   # Ensure that 'id_col' exists in 'datal'
   if (!id_col %in% names(datal)) {
@@ -246,3 +247,57 @@ filter_observations <- function(df, column, threshold_value) {
   return(df_filtered)
 }
 
+
+
+condense_groups <- function(.mat, include_annotations = TRUE) {
+  # Load required libraries
+  if (!requireNamespace("dplyr", quietly = TRUE)) {
+    stop("Package 'dplyr' is required but not installed.")
+  }
+  if (!requireNamespace("stringr", quietly = TRUE)) {
+    stop("Package 'stringr' is required but not installed.")
+  }
+
+  library(dplyr)
+  library(stringr)
+
+  # Check if .mat is a data frame
+  if (!is.data.frame(.mat)) {
+    stop("Input '.mat' must be a data frame or tibble.")
+  }
+
+  # Define the annotation columns if needed
+  required_non_numeric_exclusions <- if (include_annotations) c("ms_lit", "lt_lit") else character(0)
+
+  # Identify numeric and non-numeric columns excluding specific columns
+  numeric_cols <- sapply(.mat, is.numeric) & !names(.mat) %in% required_non_numeric_exclusions
+  non_numeric_cols <- !numeric_cols
+
+  # Select columns accordingly
+  selected_numeric <- names(.mat)[numeric_cols]
+  selected_non_numeric <- names(.mat)[non_numeric_cols]
+
+  # Group by all numeric columns and summarize non-numeric columns
+  condensed_data <- .mat %>%
+    select(all_of(c(selected_non_numeric, selected_numeric))) %>%
+    group_by(across(all_of(selected_numeric))) %>%
+    summarize(
+      across(
+        all_of(selected_non_numeric),
+        ~ paste(sort(unique(.)), collapse = "/"),
+        .names = "aggregated_{col}"
+      ),
+      .groups = 'drop'
+    )
+
+  # Format 'sitename' for better readability, if present
+  if ("aggregated_sitename" %in% names(condensed_data)) {
+    condensed_data <- condensed_data %>%
+      mutate(
+        aggregated_sitename = str_replace_all(aggregated_sitename, '/', ' / ') %>%
+          str_wrap(width = 48)
+      )
+  }
+
+  return(condensed_data)
+}
