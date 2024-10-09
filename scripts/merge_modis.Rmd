@@ -8,7 +8,7 @@ output:
     highlight: zenburn
     toc: yes
     toc_float: false
-    self_contained: true
+    self_contained: false
 params:
   root_dir: NULL
   data_dir: NULL
@@ -16,7 +16,7 @@ params:
   metadata: NULL
   config: "None"  # from python. make all the NULLs "None"?
   gct: NULL # not always used
-  save_environ: false
+  save_env: false
 ---
 
 <style type="text/css">
@@ -61,7 +61,7 @@ config <- io_tools$load_config(params$config) # if null returns defaults
 
 knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures"))
 
-SAVE_ENVIRON <- params$save_environ %||% FALSE
+SAVE_ENV <- params$save_env %||% FALSE
 
 ```
 
@@ -156,13 +156,13 @@ data %>%
 ```{r}
 
 data %>%
-  distinct(spectra, .keep_all = T) %>% 
+  distinct(spectra, .keep_all = T) %>%
   mutate(expr_file = fix_title(expr_file)) %>%
   ggplot(mapping = aes(x=expr_file, y = hyperscore_best, fill = AA)) +
   geom_violin() +
   facet_wrap(~expr_file, scales = "free_x") +
   theme_minimal()
-  
+
 
 ```
 
@@ -178,7 +178,7 @@ data %>%
   arrange(-n) %>%
   ungroup
 
-.counts %>%  
+.counts %>%
   mutate(expr_file = fix_title(expr_file)) %>%
   ggplot(aes(x = AA, y = n, fill = AA)) +
   geom_bar(stat = "identity") +
@@ -187,7 +187,7 @@ data %>%
   labs(title = "Max Spectral Count by Amino Acid", x = "Amino Acid", y = "Count")
 
 ```
-```{r, label='barplot no ambiguity'} 
+```{r, label='barplot no ambiguity'}
 
 # Removing ambiguous sites
 cleaned_data <- data %>%
@@ -212,7 +212,7 @@ ggplot(mapping = aes(x = AA, y = n, fill = AA)) +
   labs(title = "Non-Ambiguous Spectra Count by Amino Acid", x = "Amino Acid", y = "Count")
 
 ```
-        
+
 
 
 ```{r, label='explore2'}
@@ -246,24 +246,24 @@ datal %<>%
   )  %>%
   group_by(site_id) %>% mutate(zscore = util_tools$myzscore(log2_val)) %>% ungroup()
 
-    
- 
+
+
 # counts <- datal %>%
 #   dplyr::filter(!is.na(log2_val)) %>%
 #   group_by(site_id, expr_file ) %>%
 #   summarize(n=n()) %>%
 #   arrange(-n)
-# 
-# keep <- 
+#
+# keep <-
 # .counts$expr_file
-# 
-# 
+#
+#
 # maxn <- min(max(counts$n), nrow(metadata))
 # tokeep <- counts %>% filter(n >= maxn)
 # datal %<>% dplyr::filter(
 #   site_id %in% tokeep$site_id
 # )
-# 
+#
   # (counts)
   # (maxn)
 # datal %>% head() %>% myreactable()
@@ -345,7 +345,7 @@ dataw <- datal %>%
   pivot_wider(
     id_cols = site_id,
     names_from = name,
-    #values_fn = function(x) median(x, na.rm = T),
+    values_fn = function(x) median(x, na.rm = T),
     values_from = log2_val, # sometimes this happens after merging with phosphositeplus table
   )
 dataw %>% write_tsv(file.path(OUTDIR, paste0(OUTNAME, "_modi_normed.tsv")))
@@ -355,7 +355,7 @@ gct <- datal %>% io_tools$create_gct_from_datal()
 gct %>% cmapR::write_gct(file.path(OUTDIR, paste0(OUTNAME, "_modi_normed")))
 
 
-if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'merge_modis.RData'))
+if (SAVE_ENV) save.image(file.path(OUTDIR$data_dir, 'merge_modis.RData'))
 
 
 ```

@@ -116,7 +116,7 @@ def common_options(f):
         help="Root directory, default is location of command invocation",
     )(f)
     f = click.option(
-        "--save-environ",
+        "--save-env",
         type=click.BOOL,
         required=False,
         default=False,
@@ -362,6 +362,22 @@ def report(
         }
     )
 
+    if template == "merge_modis":  # eventually will move this out
+        params = (
+            "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
+        )
+        cmd = [
+            f"Rscript",
+            "-e",
+            f"""library(rmarkdown)
+            rmarkdown::render("{template_file}",
+            output_dir="{output_dir}",
+            params={params},
+            )""",
+        ]
+        logger.info(cmd)
+        subprocess.run(cmd)
+
     import rpy2.robjects as robjects
 
     for k, v in params_dict.items():
@@ -389,27 +405,10 @@ def report(
             config_file = config_file,
             gct_file = gct_file,
             save_env = save_env,
-            xx = ifelse(exists("xx"), xx, NULL),
-            # here_dir = ifelse(exists("here_dir"), here_dir, NULL),
                )
                """
     )
     return
-
-    # params = "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
-
-    # cmd = [
-    #     f"Rscript",
-    #     "-e",
-    #     f"""library(rmarkdown)
-    #     rmarkdown::render("{template_file}",
-    #     output_dir="{output_dir}",
-    #     params={params},
-    #     )""",
-    # ]
-
-    # logger.info(cmd)
-    # subprocess.run(cmd)
 
 
 # we are not using this
