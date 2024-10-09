@@ -58,62 +58,62 @@ sort_by_number_after_underscore <- function(strings) {
 #   A condensed data frame with aggregated non-numeric columns and summarized numeric columns.
 #   The 'sitename' column is formatted for better readability.
 #   If expected columns are missing, the function will throw an error.
-condense_groups <- function(.mat) {
-  # Load required libraries
-  if (!requireNamespace("dplyr", quietly = TRUE)) {
-    stop("Package 'dplyr' is required but not installed.")
-  }
-  if (!requireNamespace("stringr", quietly = TRUE)) {
-    stop("Package 'stringr' is required but not installed.")
-  }
+# condense_groups <- function(.mat) {
+#   # Load required libraries
+#   if (!requireNamespace("dplyr", quietly = TRUE)) {
+#     stop("Package 'dplyr' is required but not installed.")
+#   }
+#   if (!requireNamespace("stringr", quietly = TRUE)) {
+#     stop("Package 'stringr' is required but not installed.")
+#   }
 
-  library(dplyr)
-  library(stringr)
+#   library(dplyr)
+#   library(stringr)
 
-  # Check if .mat is a data frame
-  if (!is.data.frame(.mat)) {
-    stop("Input '.mat' must be a data frame or tibble.")
-  }
+#   # Check if .mat is a data frame
+#   if (!is.data.frame(.mat)) {
+#     stop("Input '.mat' must be a data frame or tibble.")
+#   }
 
-  # Check for required columns
-  required_non_numeric_exclusions <- c("ms_lit", "lt_lit")
-  missing_exclusions <- setdiff(required_non_numeric_exclusions, names(.mat))
-  if (length(missing_exclusions) > 0) {
-    warning(paste("Missing required columns:", paste(missing_exclusions, collapse = ", ")))
-  }
+#   # Check for required columns
+#   required_non_numeric_exclusions <- c("ms_lit", "lt_lit")
+#   missing_exclusions <- setdiff(required_non_numeric_exclusions, names(.mat))
+#   if (length(missing_exclusions) > 0) {
+#     warning(paste("Missing required columns:", paste(missing_exclusions, collapse = ", ")))
+#   }
 
-  # Identify numeric and non-numeric columns excluding specific columns
-  numeric_cols <- sapply(.mat, is.numeric) & !names(.mat) %in% required_non_numeric_exclusions
-  non_numeric_cols <- !numeric_cols
+#   # Identify numeric and non-numeric columns excluding specific columns
+#   numeric_cols <- sapply(.mat, is.numeric) & !names(.mat) %in% required_non_numeric_exclusions
+#   non_numeric_cols <- !numeric_cols
 
-  # Select columns accordingly
-  selected_numeric <- names(.mat)[numeric_cols]
-  selected_non_numeric <- names(.mat)[non_numeric_cols]
+#   # Select columns accordingly
+#   selected_numeric <- names(.mat)[numeric_cols]
+#   selected_non_numeric <- names(.mat)[non_numeric_cols]
 
-  # Group by all numeric columns and summarize non-numeric columns
-  condensed_data <- .mat %>%
-    select(all_of(c(selected_non_numeric, selected_numeric))) %>%
-    group_by(across(all_of(selected_numeric))) %>%
-    summarize(
-      across(
-        all_of(selected_non_numeric),
-        ~ paste(sort(unique(.)), collapse = "/"),
-        .names = "aggregated_{col}"
-      ),
-      .groups = 'drop'
-    )
-
-  # Format 'sitename' for better readability, if present
-  if ("aggregated_sitename" %in% names(condensed_data)) {
-    condensed_data <- condensed_data %>%
-      mutate(
-        aggregated_sitename = str_replace_all(aggregated_sitename, '/', ' / ') %>%
-          str_wrap(width = 48)
-      )
-  }
-
-  return(condensed_data)
-}
+#   # Group by all numeric columns and summarize non-numeric columns
+#   condensed_data <- .mat %>%
+#     select(all_of(c(selected_non_numeric, selected_numeric))) %>%
+#     group_by(across(all_of(selected_numeric))) %>%
+#     summarize(
+#       across(
+#         all_of(selected_non_numeric),
+#         ~ paste(sort(unique(.)), collapse = "/"),
+#         .names = "aggregated_{col}"
+#       ),
+#       .groups = 'drop'
+#     )
+#
+#   # Format 'sitename' for better readability, if present
+#   if ("aggregated_sitename" %in% names(condensed_data)) {
+#     condensed_data <- condensed_data %>%
+#       mutate(
+#         aggregated_sitename = str_replace_all(aggregated_sitename, '/', ' / ') %>%
+#           str_wrap(width = 48)
+#       )
+#   }
+#
+#   return(condensed_data)
+# }
 
 # Function: do_plot
 # Description: Generates and saves heatmaps based on differential expression results.
@@ -134,7 +134,7 @@ condense_groups <- function(.mat) {
 #   Throws errors if required packages are missing or input data is invalid.
 
 .do_plot_example <- function(df, comp_name, n = 60, datal, meta, OUTDIR, util_tools) {
-    # this is to be refactored. df is a dataframe of stat results. we should have a gct object to make the data loading easier
+  # this is to be refactored. df is a dataframe of stat results. we should have a gct object to make the data loading easier
   # Load required libraries
   required_packages <- c("dplyr", "stringr", "ComplexHeatmap", "grid", "tidyr", "purrr", "dendsort")
   missing_packages <- setdiff(required_packages, rownames(installed.packages()))
@@ -176,7 +176,7 @@ condense_groups <- function(.mat) {
   # Step 1: Select top n sites based on P.Value
   .sel <- df %>%
     arrange(P.Value) %>%
-    head(n = as.integer(100 * n))  # Assuming 'n' needs to be scaled by 100 for some reason
+    head(n = as.integer(100 * n)) # Assuming 'n' needs to be scaled by 100 for some reason
 
   # Step 2: Filter 'datal' for selected 'site_id' and exclude 'Refmix' entries
   .data <- datal %>%
@@ -197,7 +197,7 @@ condense_groups <- function(.mat) {
     )
 
   # Step 4: Condense groups and select top 'n' entries
-  .mat <- condense_groups(.mat) %>%
+  .mat <- util_tools$condense_groups(.mat) %>%
     head(n = n)
 
   # Step 5: Align metadata with the matrix columns
@@ -280,8 +280,6 @@ condense_groups <- function(.mat) {
     top_annotation = ca,
     cluster_rows = dendsort(hclust(dist_no_na(.ht_mat), method = "ward.D2")),
     clustering_method_columns = "ward.D2",
-
-
   )
 
   # Define output file paths
@@ -410,8 +408,8 @@ process_cut_by <- function(cut_by, cdesc) {
 
   # Ensure cut_by is now a character vector
   if (!is.character(cut_by)) {
-    #warning("cut_by should be a character string or vector.")
-    #return(NULL)
+    # warning("cut_by should be a character string or vector.")
+    # return(NULL)
     # this is fine
     cut_by <- as.character(cut_by)
   }
@@ -453,20 +451,23 @@ make_heatmap_fromgct <- function(
     include_row_annotations = TRUE,
     meta_to_include = NULL, # if NULL uses all
     meta_to_exclude = NULL, # if NULL filters nothing out
+    do_condense_groups = TRUE,
     ...) {
-
+  print("making heatmap from gct")
   # gct <- subgct
   # gct@cdesc$treat <-
   #   factor(.gct@cdesc$treat , levels = c("untreated", "carboplatin", "IMT", "carboplatin_IMT"), ordered = T)
 
-  default_meta_to_exclude <- c("recno", "runno", "searchno", "label", "expr_col", "expr_file")
+  default_meta_to_exclude <- c(
+    "recno", "runno", "searchno", "label", "expr_col", "expr_file",
+    "assay", "rec_run_search"
+  )
   # If user specifies additional meta_to_exclude, merge with defaults
   if (!is.null(meta_to_exclude)) {
     meta_to_exclude <- union(default_meta_to_exclude, meta_to_exclude)
   } else {
     meta_to_exclude <- default_meta_to_exclude
   }
-
 
 
   if (!is.null(sample_order)) { # maybe put this order checking later
@@ -483,22 +484,28 @@ make_heatmap_fromgct <- function(
   }
 
 
-  rdesc <- gct %>% cmapR::melt_gct(keep_cdesc = FALSE, suffixes = c('.x', '.y')) %>% distinct(id.x, .keep_all = TRUE)
+  rdesc <- gct %>%
+    cmapR::melt_gct(keep_cdesc = FALSE, suffixes = c(".x", ".y")) %>%
+    distinct(id.x, .keep_all = TRUE)
   rdesc <- rdesc %>%
-    dplyr::select(id.x, ms_lit, lt_lit, sitename) %>% #distinct() %>%
+    dplyr::select(id.x, ms_lit, lt_lit, sitename) %>% # distinct() %>%
     mutate(
       ms_lit = replace_na(ms_lit, 0),
       lt_lit = replace_na(lt_lit, 0)
     )
   # note the default call of data.frame has check.names = TRUE
-  mat_data <- as.data.frame(gct@mat)[rdesc$id.x, ] %>% rownames_to_column(var = "id.x") %>% left_join(rdesc, by = "id.x")
-  mat_data <- condense_groups(mat_data) %>% rename(sitename = aggregated_sitename, ms_lit = aggregated_ms_lit, lt_lit = aggregated_lt_lit)
-  row_labels <- mat_data$sitename
+  mat_data <- as.data.frame(gct@mat)[rdesc$id.x, ] %>%
+    rownames_to_column(var = "id.x") %>%
+    left_join(rdesc, by = "id.x")
+  if (do_condense_groups) {
+    mat_data <- util_tools$condense_groups(mat_data) %>% rename(sitename = aggregated_sitename, ms_lit = aggregated_ms_lit, lt_lit = aggregated_lt_lit)
+  }
 
+  row_labels <- mat_data$sitename
   heatmap_legend_param <- list(title = "zscore")
-  heatmap_matrix_width  <- NULL
+  heatmap_matrix_width <- NULL
   heatmap_matrix_height <- NULL
-  if (optimal_size == TRUE){
+  if (optimal_size == TRUE) {
     heatmap_matrix_width <- unit(ncol(mat_data) * .2, "in")
     heatmap_matrix_height <- unit(nrow(mat_data) * .2, "in")
   }
@@ -561,25 +568,24 @@ make_heatmap_fromgct <- function(
   column_annotations <- NULL
 
   cmeta <- gct@cdesc
-  if (!is.null(meta_to_include)){
-    message('subsetting cmeta by inclusion list')
+  if (!is.null(meta_to_include)) {
+    message("subsetting cmeta by inclusion list")
     cmeta <- cmeta %>% dplyr::select(any_of(meta_to_include))
   }
-  if (!is.null(meta_to_exclude)){
-    message('subsetting cmeta by exclusion list')
+  if (!is.null(meta_to_exclude)) {
+    message("subsetting cmeta by exclusion list")
     cmeta <- cmeta %>% dplyr::select(-any_of(meta_to_exclude))
-
   }
-  #.colors <- util_tools$create_named_color_list(gct@cdesc, colnames(gct@cdesc))
+  # .colors <- util_tools$create_named_color_list(gct@cdesc, colnames(gct@cdesc))
   message(meta_to_include)
   message(colnames(cmeta))
   .colors <- util_tools$create_named_color_list(cmeta, colnames(cmeta))
   # browser()
   column_annotations <- ComplexHeatmap::columnAnnotation(
-      df = cmeta,
-      col = .colors,
-      annotation_name_side = "right"
-    )
+    df = cmeta,
+    col = .colors,
+    annotation_name_side = "right"
+  )
 
   .legend_width <- unit(6, "cm")
   .cbar_title <- "zscore"
@@ -593,7 +599,7 @@ make_heatmap_fromgct <- function(
   dist_no_na <- util_tools$dist_no_na
 
   ht <- ComplexHeatmap::Heatmap(
-    mat_data[ , colnames(gct@mat)],
+    mat_data[, colnames(gct@mat)],
     width = heatmap_matrix_width,
     height = heatmap_matrix_height,
     # TODO use z_score_withna or other custom func for handling nas when scaling
@@ -606,21 +612,16 @@ make_heatmap_fromgct <- function(
     row_title = row_title,
     # column_title = column_title,
     column_title_gp = gpar(fontsize = 9, fontface = "bold", just = "left"),
-
     column_labels = gct@cdesc$id, # id should always be here
 
     column_split = cut_by,
-
-
     top_annotation = column_annotations,
     right_annotation = row_annotations,
-
     heatmap_legend_param = heatmap_legend_param,
     row_names_gp = grid::gpar(fontsize = 7.4),
     column_names_gp = grid::gpar(fontsize = 7.4),
     cluster_column_slices = FALSE,
     column_names_side = "top",
-
     clustering_distance_rows = dist_no_na,
     clustering_distance_columns = dist_no_na
   )
@@ -644,7 +645,6 @@ make_heatmap_fromgct <- function(
   width <- 8 + (ncol(mat_data) * .26)
 
   if (!is.null(save_func)) {
-
     # log_msg(debug = paste0("save func attrs before: "))
     # log_msg(debug = paste0(names(get_args(save_func)), "-", get_args(save_func)))
 
@@ -659,4 +659,3 @@ make_heatmap_fromgct <- function(
 
   return(do_draw)
 }
-
