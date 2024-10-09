@@ -1,11 +1,21 @@
 # lazyloader.R
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(fs))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(stringr))
 
 # Only define get_tool_env if it doesn't already exist
 if (!exists("get_tool_env", envir = .GlobalEnv)) {
   get_tool_env <- local({
-    all_tools <- c("heatmap", "io", "utils")
+    # all_tools <- file.path(here("R"), list.files(here("R"), pattern = "\\.R$", full.names = FALSE))
+    all_tools <- fs::dir_ls(path=here("R"), glob = "*.R") %>% map(basename) %>% flatten_chr() %>% str_remove(".R")
+
+    print(getwd())
+    print(all_tools)
+
+    # all_tools <- c("heatmap", "io", "utils")
     #heatmap.R  io.R  lazyloader.R  reduce.R  summarize_rmd.R  utils.R
-    
+
     # Initialize cache with empty environments
     tools_cache <- setNames(vector("list", length(all_tools)), all_tools)
     for (tool_name in all_tools) {
