@@ -260,8 +260,13 @@ create_gct_from_datal <- function(datal){
     # Here, 'name' represents the sample identifier
 
     expression_matrix <- datal %>%
-      select(site_id, name, log2_val) %>%  # Ensure 'log2_val' is your expression value
-      pivot_wider(names_from = name, values_from = log2_val) %>%
+      select(site_id, name, log2_val) %>%
+      pivot_wider(names_from = name,
+                  values_from = log2_val,
+                  values_fn = function(x) median(x, na.rm = T) # sometimes the merging of different tables creates duplicate records
+                  # e.g. acquired data merged with phosphositeplus .
+
+      ) %>%
       column_to_rownames("site_id") %>%
       as.matrix()
 
