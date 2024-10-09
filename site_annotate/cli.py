@@ -270,7 +270,9 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
     return meta_df
 
 
-def validate_meta(metadata_file: pathlib.Path, data_dir: pathlib.Path):
+def validate_meta(
+    metadata_file: pathlib.Path, data_dir: pathlib.Path, ensure_data=True
+):
     """
     top level function to validate metadata
     """
@@ -307,7 +309,7 @@ def report(
     metadata,
     gct,
     root_dir,
-    save_environ=False,
+    save_env=False,
     **kwargs,
 ):
     print(template)
@@ -319,10 +321,17 @@ def report(
         config = pathlib.Path(config).absolute()
         params_dict["config"] = str(config)
 
+    if gct is not None:
+        if not os.path.exists(gct):
+            logger.error(f"{gct} does not exist")
+            raise FileNotFoundError(f"{gct} does not exist")
+        params_dict["gct"] = pathlib.Path(gct).absolute()
+
     if data_dir is not None:
         data_dir = pathlib.Path(data_dir).absolute()
         params_dict["data_dir"] = str(data_dir)
-    if metadata is not None:
+
+    if metadata is not None and gct is None:
         metadata = pathlib.Path(metadata).absolute()
         # now we check if metadata is aligned with available experimental data
         meta_validated = validate_meta(metadata, data_dir)
@@ -330,8 +339,6 @@ def report(
         meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
         logger.info(f"wrote {meta_validated_fname}")
         params_dict["metadata"] = str(meta_validated_fname)
-    if gct is not None:
-        params_dict["gct"] = pathlib.Path(gct).absolute()
     if output_dir is None:
         output_dir = data_dir
     if not os.path.exists(output_dir):
@@ -342,6 +349,8 @@ def report(
     #
 
     # Create a dictionary with all parameters
+    for k, v in kwargs.items():
+        params_dict[k] = v
     params_dict.update(
         {
             # "config": str(config),
@@ -349,26 +358,58 @@ def report(
             # "metadata": str(meta_validated_fname),
             "output_dir": str(output_dir),
             "root_dir": str(root_dir),
-            "save_environ": str.lower(str(save_environ)),
+            "save_env": str.lower(str(save_env)),
         }
     )
 
-    for k, v in kwargs.items():
-        params_dict[k] = v
-    params = "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
+    import rpy2.robjects as robjects
 
-    cmd = [
-        f"Rscript",
-        "-e",
-        f"""library(rmarkdown)
-        rmarkdown::render("{template_file}",
-        output_dir="{output_dir}",
-        params={params},
-        )""",
-    ]
+    for k, v in params_dict.items():
+        robjects.r.assign(k, str(v))
 
-    logger.info(cmd)
-    subprocess.run(cmd)
+    runfile = pathlib.Path(__file__).parent.parent / "R/run.R"
+    robjects.r.assign("here_dir", str(runfile.parent))
+    robjects.r("setwd(here_dir)")
+    robjects.r.source(str(runfile))
+
+    os.chdir(str(runfile.parent))
+
+    robjects.r(
+        """
+        data_dir <- ifelse(exists("data_dir"), output_dir, '.')
+        output_dir <- ifelse(exists("output_dir"), output_dir, '.')
+        config_file <- ifelse(exists("config"), config, NULL)
+        gct_file <- ifelse(exists("gct"), gct, NULL)
+        save_env <- ifelse(exists("save_env"), save_env, FALSE)
+
+        print(paste0('output dir is: ', output_dir))
+        run(
+            data_dir = data_dir,
+            output_dir = output_dir,
+            config_file = config_file,
+            gct_file = gct_file,
+            save_env = save_env,
+            xx = ifelse(exists("xx"), xx, NULL),
+            # here_dir = ifelse(exists("here_dir"), here_dir, NULL),
+               )
+               """
+    )
+    return
+
+    # params = "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
+
+    # cmd = [
+    #     f"Rscript",
+    #     "-e",
+    #     f"""library(rmarkdown)
+    #     rmarkdown::render("{template_file}",
+    #     output_dir="{output_dir}",
+    #     params={params},
+    #     )""",
+    # ]
+
+    # logger.info(cmd)
+    # subprocess.run(cmd)
 
 
 # we are not using this
