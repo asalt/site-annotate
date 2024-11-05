@@ -1,4 +1,5 @@
 # io.py
+import os
 import re
 import pathlib
 from pathlib import Path
@@ -56,6 +57,7 @@ RENAME = {
     "ion_130_141": "TMT_130_C",
     "ion_131_138": "TMT_131_N",
 }
+RENAME.update({x.replace("_", "-"): y for x, y in RENAME.items()})
 
 
 def get_isoform_hierarchy() -> pd.DataFrame:
@@ -197,3 +199,174 @@ def validate_psm_file(df):
 
     return True
     # if 'peptide' not in
+
+
+def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
+    """ """
+    for rrs, expr_file in rec_run_searches.items():
+        rec, run, search = rrs.split("_")
+
+        _meta = meta_df[
+            (
+                (meta_df.recno == rec)
+                & (meta_df.runno == run)
+                & (meta_df.searchno == search)
+            )
+        ]
+        meta_df.loc[_meta.index, "expr_col"] = None
+        meta_df.loc[_meta.index, "expr_file"] = expr_file
+        df = pd.read_table(expr_file, nrows=5)
+        df = df.rename(columns=RENAME)
+
+        # if "intensity_sum" not in df.columns:
+        #     raise ValueError(f"`intensity_sum` not found in {expr_file}")
+        if "intensity_sum" not in df.columns:
+            logger.warning(
+                f"`intensity_sum` not found in {expr_file}. Downstream analyis might fail"
+            )
+            # raise ValueError(f"`intensity_sum` not found in {expr_file}")
+
+        if "label" in _meta.columns:
+            for label in _meta["label"].tolist():
+                label_mapping = [x for x in df.columns if x.startswith(label)]
+                if len(label_mapping) == 0:
+                    logger.warning(f"could not find sample with label {label}")
+                    continue
+                if len(label_mapping) > 1:
+                    logger.warning(f"too many results for {label}")
+                    continue
+                if len(label_mapping) == 1:
+                    expr_col = label_mapping[0]
+
+                ix = meta_df[
+                    (meta_df["rec_run_search"] == rrs) & (meta_df["label"] == label)
+                ].index
+                if (len(ix)) != 1:
+                    import ipdb
+
+                    ipdb.set_trace()
+                    1 + 1
+                ix = ix[0]
+                meta_df.loc[ix, "expr_col"] = expr_col
+                meta_df.loc[ix, "expr_file"] = expr_file
+        else:
+            expr_col = "intensity_sum"
+            meta_df.loc[_meta.index, "expr_col"] = "intensity_sum"
+    return meta_df
+
+
+def merge_metadata(meta_df: pd.DataFrame, **kwargs):
+    expr_files = meta_df["expr_file"].unique()
+    # expr_files <- meta$expr_file %>% unique
+
+
+def merge_metadata(metadata: pd.DataFrame):
+    # Load metadata file
+
+    # Find unique expression file paths
+    unique_expr_files = metadata["expr_file"].unique()
+
+    # Dictionary to hold processed DataFrames for each file
+    processed_data = {}
+
+    # Iterate over each unique expression file
+    for expr_file in unique_expr_files:
+        # Load the expression data
+        expr_data = pd.read_csv(
+            expr_file, sep="\t"
+        )  # Assuming TSV format for expr files which is true
+        expr_data = expr_data.rename(
+            columns=RENAME
+        )  # a universal renamer for various possible names
+
+        # Filter metadata rows corresponding to the current expression file
+        file_metadata = metadata[metadata["expr_file"] == expr_file]
+        assert file_metadata["expr_col"].unique().shape[0] == len(file_metadata)
+        mapper = file_metadata[["name", "expr_col"]].set_index("expr_col").to_dict()
+        name_mapper = mapper["name"]
+
+        expr_data = expr_data.rename(columns=name_mapper)
+        # Store the processed DataFrame with unique renames in the dictionary
+        processed_data[os.path.basename(expr_file)] = expr_data
+
+    # Combine all processed DataFrames (aligning by index) to create a single combined DataFrame
+    combined_df = pd.concat(processed_data.values(), axis=1)
+
+    if "Index" in combined_df.columns:
+        combined_df = combined_df.set_index("Index")
+    elif "index" in combined_df.columns:
+        combined_df = combined_df.set_index("index")
+    elif "site_id" in combined_df.columns:
+        combined_df = combined_df.set_index("site_id")
+    else:
+        pass
+
+    # combined_df.to_csv("combined_df.tsv", sep="\t", index=False)
+
+    emat = combined_df[metadata["name"]]
+    # rdesc = everything not in emat  but in orig mat
+    write_gct(emat, cdesc=metadata, filename="siteinfo_combined")
+
+    return combined_df
+
+
+def write_gct(emat, cdesc, rdesc=None, filename="siteinfo_combined"):
+    """
+    Write expression data to a .gct file format using separate dataframes for emat and cdesc.
+
+    Parameters:
+    - emat (pd.DataFrame): Expression matrix where rows are genes and columns are samples.
+    - cdesc (pd.DataFrame): Column descriptions with the same columns as emat.
+    - filename (str): Path to save the .gct file.
+    - rdesc (pd.DataFrame, optional): Row descriptions (metadata) for each gene. Should align with rows in emat.
+    """
+    # Prepare metadata and dimension information
+    num_rows, num_cols = emat.shape
+
+    # Ensure cdesc has the correct columns and order
+    if not all(cdesc.index == emat.columns):
+        raise ValueError(
+            "Columns of cdesc must match the columns of emat in the same order."
+        )
+
+    if rdesc is None:
+        rdesc = pd.DataFrame(index=emat.index)
+        rdesc["value"] = rdesc.index
+
+    # Prepare the header lines
+    header_lines = [
+        "#1.3",
+        f"{num_rows}\t{num_cols}\t{rdesc.shape[1]}\t{cdesc.shape[1]}",
+    ]
+
+    # Open file and write header and column descriptions
+    outname = f"{filename}_{num_rows}x{num_cols}.gct"
+    print(f"Writing to {outname}")
+
+    with open(outname, "w") as f:
+        # Write header lines
+        for line in header_lines:
+            f.write(line + "\n")
+
+        # Write column names
+        col_header = ["id", *list(rdesc.columns), *list(emat.columns)]
+        f.write("\t".join(col_header) + "\n")
+
+        # Write column descriptions (cdesc)
+        # import ipdb
+
+        # ipdb.set_trace()
+        for desc_col in cdesc.columns:
+            desc_str = (
+                f"{desc_col}\t"
+                + "na\t" * len(rdesc.columns)
+                + "\t".join(map(str, cdesc[desc_col]))
+            )
+            f.write(desc_str + "\n")
+
+        # Write expression data with optional row descriptions
+        for gene_name, row_data in emat.iterrows():
+            rdesc_str = "\t".join(map(str, rdesc.loc[gene_name]))
+            row_str = f"{gene_name}\t{rdesc_str}\t" + "\t".join(map(str, row_data))
+
+            f.write(row_str + "\n")

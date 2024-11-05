@@ -146,6 +146,33 @@ def common_options(f):
 # @click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False))
 
 
+def conf_to_dataframe(conf_file, set_index=False):
+    # Initialize config parser
+    import configparser
+
+    config = configparser.ConfigParser()
+    config.read(conf_file)
+
+    # Prepare dictionary for storing data
+    data = {}
+
+    # Loop through each section to create rows
+    for section in config.sections():
+        section_data = config[section]
+        row = {key: section_data[key] for key in section_data}
+        row["name"] = section  # Include section name as 'name' column
+        data[section] = row
+
+    # Convert dictionary to DataFrame
+    df = pd.DataFrame.from_dict(data, orient="index")
+
+    # Optional: Set 'name' as index
+    if set_index:
+        df.set_index("name", inplace=True)
+
+    return df
+
+
 def get_reader(file: str):
     if file.endswith(".tsv"):
         return pd.read_table
@@ -153,6 +180,8 @@ def get_reader(file: str):
         return pd.read_csv
     elif file.endswith(".xlsx"):
         return pd.read_excel
+    elif file.endswith(".conf"):
+        return conf_to_dataframe
     else:
         logger.error(f"do not know how to read file")
         return None
@@ -208,6 +237,12 @@ def find_expr_file(rec_run_search: str, data_dir):
     """
     search_pattern = os.path.join(data_dir, f"{rec_run_search}*reduced*tsv")
     results = glob.glob(search_pattern)
+
+    if not results:  # try one more time
+        logger.info(f"trying again with not reduced")
+        search_pattern = os.path.join(data_dir, f"{rec_run_search}*tsv")
+        results = glob.glob(search_pattern)
+
     if len(results) == 0:
         logger.warning(f"no files found for {rec_run_search} in {data_dir}")
         raise FileNotFoundError(f"no files found for {rec_run_search} in {data_dir}")
@@ -224,50 +259,6 @@ def find_expr_file(rec_run_search: str, data_dir):
 
 def find_expr_files(rec_run_searches, data_dir):
     return {rrs: find_expr_file(rrs, data_dir) for rrs in rec_run_searches}
-
-
-def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
-    """ """
-    for rrs, expr_file in rec_run_searches.items():
-        rec, run, search = rrs.split("_")
-
-        _meta = meta_df[
-            (
-                (meta_df.recno == rec)
-                & (meta_df.runno == run)
-                & (meta_df.searchno == search)
-            )
-        ]
-        meta_df.loc[_meta.index, "expr_col"] = None
-        meta_df.loc[_meta.index, "expr_file"] = expr_file
-        _df = pd.read_table(expr_file, nrows=5)
-
-        if "intensity_sum" not in _df.columns:
-            raise ValueError(f"`intensity_sum` not found in {expr_file}")
-
-        if "label" in _meta.columns:
-            for label in _meta["label"].tolist():
-                label_mapping = [x for x in _df.columns if x.startswith(label)]
-                if len(label_mapping) == 0:
-                    logger.warning(f"could not find sample with label {label}")
-                    next
-                if len(label_mapping) > 1:
-                    logger.warning(f"too many results for {label}")
-                    next
-                if len(label_mapping) == 1:
-                    expr_col = label_mapping[0]
-
-                ix = meta_df[
-                    (meta_df["rec_run_search"] == rrs) & (meta_df["label"] == label)
-                ].index
-                assert (len(ix)) == 1
-                ix = ix[0]
-                meta_df.loc[ix, "expr_col"] = expr_col
-                meta_df.loc[ix, "expr_file"] = expr_file
-        else:
-            expr_col = "intensity_sum"
-            meta_df.loc[_meta.index, "expr_col"] = "intensity_sum"
-    return meta_df
 
 
 def validate_meta(
@@ -287,8 +278,47 @@ def validate_meta(
     if len(expr_data) == 0:  # no data
         return
 
-    meta_df_final = validate_expr_files(expr_data, meta_df)
+    meta_df_final = io.validate_expr_files(expr_data, meta_df)
+    logger.info(f"successfully validated {metadata_file}")
+
     return meta_df_final
+
+
+@main.command()
+@click.argument("metadata", type=click.Path(exists=True, dir_okay=False))
+@click.argument("data_dir", type=click.Path(exists=True, file_okay=False))
+def check_meta(metadata, data_dir):
+    meta_validated = validate_meta(metadata, data_dir)
+    print(meta_validated.to_string())
+    print("Success")
+
+
+@main.command()
+@click.argument("metadata", type=click.Path(exists=True, dir_okay=False))
+@click.argument(
+    "data_dir",
+    type=click.Path(exists=True, file_okay=False),
+    default=click.Path("."),
+    # show_default=True,
+)
+def merge_meta(metadata, data_dir):
+    r"""
+
+    [DATA_DIR] is the directory where the data files are located
+
+    default is current directory
+
+    """
+    metadata = pathlib.Path(metadata).absolute()
+    # can add try/except here to provide better error msg
+    meta_validated = validate_meta(metadata, data_dir)
+
+    meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
+    meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
+
+    # ===
+    logger.info(f"wrote {meta_validated_fname}")
+    io.merge_metadata(meta_validated)
 
 
 @main.command()
@@ -337,6 +367,8 @@ def report(
         meta_validated = validate_meta(metadata, data_dir)
         meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
         meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
+
+        # ===
         logger.info(f"wrote {meta_validated_fname}")
         params_dict["metadata"] = str(meta_validated_fname)
     if output_dir is None:
@@ -345,7 +377,6 @@ def report(
         os.makedirs(output_dir)
 
     output_dir = str(pathlib.Path(output_dir).absolute())
-
     #
 
     # Create a dictionary with all parameters
@@ -362,7 +393,9 @@ def report(
         }
     )
 
-    if template == "merge_modis":  # eventually will move this out
+    if (
+        template == "merge_modis" or template == "heatmap"
+    ):  # eventually will move this out
         params = (
             "list(" + ", ".join(f"'{k}' = '{v}'" for k, v in params_dict.items()) + ")"
         )
@@ -377,6 +410,7 @@ def report(
         ]
         logger.info(cmd)
         subprocess.run(cmd)
+        return
 
     import rpy2.robjects as robjects
 
