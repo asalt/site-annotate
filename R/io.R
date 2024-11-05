@@ -209,6 +209,9 @@ get_file_reader <- function(the_file){
   if (ext == "xlsx"){
     reader <- readxl::read_xlsx
   }
+  else {
+    reader <- readr::read_tsv
+  }
   return(reader)
 }
 
