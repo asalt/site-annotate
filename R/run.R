@@ -19,7 +19,6 @@ run <- function(
   suppressPackageStartupMessages(library(reactable))
   suppressPackageStartupMessages(library(RColorBrewer))
   suppressPackageStartupMessages(library(here))
-  library(dendsort)
   print(paste0("here is defined as: ", here()))
 
   source(file.path("lazyloader.R"))
@@ -44,19 +43,98 @@ run <- function(
     stop()
   }
 
-
   OUTNAME <- basename(gct_file) %>%
     basename() %>%
-    gsub("_n\\d+x\\d+\\.gct", "", .)
+    tools::file_path_sans_ext()
+
+  OUTDIR <- file.path(OUTDIR, OUTNAME)
+  if (!dir.exists(OUTDIR)) dir.create(OUTDIR, recursive = TRUE)
+
+
+  # heatmap of everything
+  gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by)
+
+
+  param_grid <- expand.grid(
+    cut_by = unique(c(config$heatmap$cut_by, NA)),
+    cluster_columns = c(TRUE, FALSE),
+    stringsAsFactors = FALSE
+  )
+
+  if (config$heatmap$do) {
+    param_grid %>% purrr::pmap(~ {
+      .cut_by <- ..1
+      .cluster_columns <- ..2
+      ht_draw_code <- gct_z %>% heatmap_tools$make_heatmap_fromgct(
+        show_row_names = FALSE,
+        optimal_size = FALSE,
+        cut_by = .cut_by,
+        cluster_columns = .cluster_columns
+      )
+
+      .nrow <- nrow(gct_z@mat)
+      .ncol <- ncol(gct_z@mat)
+      width <- 6 + (.ncol * .26)
+      height <- 12
+
+
+      .outdir <- file.path(OUTDIR, "heatmap")
+      if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
+      .outf <- file.path(
+        .outdir,
+        make.names(
+          paste0(
+            OUTNAME,
+            .nrow, "x", .ncol,
+            "_cut_", .cut_by,
+            "cc_", .cluster_columns,
+            ".pdf"
+          )
+        )
+      )
+
+      if (file.exists(.outf) && config$advanced$replace == FALSE) {
+        message(paste0(.outf, " already exists, skipping"))
+        return(NULL)
+      }
+      message(paste0("drawing ", .outf))
+      tryCatch(
+        {
+          cairo_pdf(.outf, width = width, height = height)
+          ht_draw_code()
+          dev.off()
+        },
+        error = function(e) print(e)
+      )
+    }) # end of pmap of param grid
+  } # end of if heatmap
+
 
   if (config$limma$do) {
     topTables <- limma_tools$run_limma(gct, config)
+
+    topTables %>% purrr::imap(~ { # first loop save tables
+      .table <- .x %>% arrange(desc(t))
+      .contrast <- .y
+
+      .outdir <- file.path(OUTDIR, "limma", "tables")
+      .outname <- file.path(.outdir, make.names(paste0(OUTNAME, .contrast, ".tsv")))
+
+      if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
+      if (!file.exists(.outname) || config$advanced$replace == TRUE) {
+        .table %>% write_tsv(.outname)
+      }
+
+      .outname <- file.path(.outdir, make.names(paste0(OUTNAME, .contrast, "_pdist.png")))
+      png(.outname, width = 7, height = 4.5, units = "in", res = 300)
+      limma_tools$plot_p_dist(.table, main_title = .contrast)
+      dev.off()
+    })
+
     limma_topn <- config$limma$topn %||% c(50, 100)
-
-
     param_grid <- expand.grid(
-      cut_by = config$heatmap$cut_by %||% NULL,
-      cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+      cut_by = unique(c(config$heatmap$cut_by, NULL)),
+      cluster_rows = c(TRUE, FALSE), # unique(c(config$heatmap$cluster_rows, FALSE)) %||% c(TRUE, FALSE),
       cluster_columns = config$heatmap$cluster_columns %||% FALSE,
       top_n = config$limma$top_n %||% c(50, 100)
       # file_data = file_data
@@ -64,17 +142,13 @@ run <- function(
 
     gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by)
 
-
-    topTables %>% purrr::imap(~ {
+    topTables %>% purrr::imap(~ { # second loop plot topdiff
       .table <- .x %>% arrange(desc(abs(t)))
       .contrast <- .y
 
       .outdir <- file.path(OUTDIR, "limma", "tables")
-      .outname <- file.path(.outdir, make.names(paste0(OUTNAME, .contrast, ".tsv")))
-      if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
-      if (!file.exists(.outname) || config$advanced$replace == TRUE) {
-        .table %>% write_tsv(.outname)
-      }
+
+
 
       column_title <- paste0(OUTNAME, "\ncontrast: ", .contrast)
 
@@ -87,7 +161,9 @@ run <- function(
         .top_tvals <- .table %>%
           distinct(t) %>%
           head(n = top_n_val) # %>% pull(t)
-        .subsel <- .table %>% filter(t %in% .top_tvals$t)
+        .subsel <- .table %>%
+          dplyr::filter(t %in% .top_tvals$t) %>%
+          arrange(-logFC)
 
         .gct_z <- gct_z %>% subset_gct(rid = .subsel$id)
         ht_draw_code <- .gct_z %>% heatmap_tools$make_heatmap_fromgct(
@@ -213,4 +289,49 @@ run <- function(
       }) # end of pmap of param grid
     }) # end of imap of topTables
   } # end of if limma
+
+
+  if (config$pca$do) {
+    pca_tools <- get_tool_env("pca")
+
+    param_grid <- expand.grid(
+      scale = c(TRUE, FALSE),
+      colby = config$pca$colby %||% config$pca$color %||% NA,
+      stringsAsFactors = FALSE
+    )
+
+    param_grid %>%
+     purrr::pmap( ~ {
+      do_scale <- ..1
+      colby <- ..2
+      pca_obj <- pca_tools$do_pca(gct, scale = do_scale)
+
+      .outdir <- file.path(OUTDIR, "pca")
+
+      .outf <- file.path(
+        .outdir,
+        make.names(
+          paste0(
+            "pca",
+            "_scale_", do_scale,
+            ".pdf"
+          )
+        )
+      )
+
+      plts <- pca_tools$plot_biplot(pca_obj,
+        top_pc = 3,
+        showLoadings = T,
+        labSize = 1.8, pointSize = 3,
+        sizeLoadingsNames = 2,
+        colby = colby,
+        shape = NULL,
+        encircle = !is.null(colby),
+        title = "",
+        basename = .outf
+      )
+
+    }) # end of map
+  # browser()
 }
+} # end of run
