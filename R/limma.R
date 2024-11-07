@@ -53,17 +53,61 @@ run_limma <- function(gct, config) {
     .contrast <- .y
     .table %<>% rownames_to_column(var = "id")
     .table$contrast <- .contrast
-    # recalculate adj p val on unique tests - estimated by unique t values.
-    .recal <- .table %>%
-      distinct(t, .keep_all = T) %>%
-      mutate(adj.P.Val = p.adjust(adj.P.Val))
-    .table <- left_join(
-      .table %>% select(-adj.P.Val),
-      .recal %>% select(t, adj.P.Val),
-    )
+
+    # # recalculate adj p val on unique tests - estimated by unique t values.
+    # .recal <- .table %>%
+    #   distinct(t, .keep_all = T) %>%
+    #   mutate(adj.P.Val = p.adjust(adj.P.Val))
+    # browser()
+    # .table <- left_join(
+    #   .table %>% select(-adj.P.Val),
+    #   .recal %>% select(t, adj.P.Val),
+    # )
+
     .table2 <- right_join(gct@rdesc, .table, by = "id")
     return(.table2)
   })
 
   return(toptables2)
 }
+
+plot_p_dist <- function(df, main_title = ""){
+
+  par(mfrow = c(1, 2))  # 1 row, 2 columns
+
+  # Plot raw p-values
+  p_values <- df[["P.Value"]]
+  p_adjusted <- df[["adj.P.Val"]]
+  hist(
+    p_values,
+    breaks = 30,
+    main = "Raw P-values",
+    xlab = "P-value",
+    ylab = "Count",
+    col = "lightblue",
+    border = "black"
+  )
+
+  mtext(main_title, side = 1, line = -1, outer=T, adj = 0, cex = 0.7)
+  # put at bottom left
+
+  # Plot adjusted p-values
+  hist(
+    p_adjusted,
+    breaks = 30,
+    main = "Adjusted P-values",
+    xlab = "Adjusted P-value",
+    ylab = "Count",
+    col = "lightcoral",
+    border = "black"
+  )
+  #mtext(main_title, outer = TRUE, cex = 1.5, line = -1)
+
+  # Reset plot layout
+  par(mfrow = c(1, 1))
+
+
+}
+
+
+#
