@@ -255,12 +255,7 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
     return meta_df
 
 
-def merge_metadata(meta_df: pd.DataFrame, **kwargs):
-    expr_files = meta_df["expr_file"].unique()
-    # expr_files <- meta$expr_file %>% unique
-
-
-def merge_metadata(metadata: pd.DataFrame):
+def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
     # Load metadata file
 
     # Find unique expression file paths
@@ -304,8 +299,23 @@ def merge_metadata(metadata: pd.DataFrame):
     # combined_df.to_csv("combined_df.tsv", sep="\t", index=False)
 
     emat = combined_df[metadata["name"]]
+
     # rdesc = everything not in emat  but in orig mat
-    write_gct(emat, cdesc=metadata, filename="siteinfo_combined")
+
+    if "Gene" in combined_df.columns:  # from tmt-integrator output
+        combined_df["Gene"] = combined_df["Gene"].fillna("")
+        if "sitename" not in combined_df.columns:
+            sitename = combined_df.apply(
+                lambda x: x["Gene"] + "_" + str(x.name).split("_")[-1], axis=1
+            )
+            combined_df["sitename"] = sitename
+
+    rdesc_cols = list(set(combined_df.columns) - set(emat.columns))
+    rdesc = None
+    if rdesc_cols:
+        rdesc = combined_df[list(rdesc_cols)]
+
+    write_gct(emat, cdesc=metadata, rdesc=rdesc, filename=filepath)
 
     return combined_df
 
@@ -331,7 +341,7 @@ def write_gct(emat, cdesc, rdesc=None, filename="siteinfo_combined"):
 
     if rdesc is None:
         rdesc = pd.DataFrame(index=emat.index)
-        rdesc["value"] = rdesc.index
+        rdesc["rdesc"] = rdesc.index
 
     # Prepare the header lines
     header_lines = [
