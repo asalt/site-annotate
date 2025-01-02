@@ -265,7 +265,7 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
     processed_data = {}
 
     # Iterate over each unique expression file
-    for expr_file in unique_expr_files:
+    for expr_file in unique_expr_files: # this is messy, begin to refactor
         # Load the expression data
         expr_data = pd.read_csv(
             expr_file, sep="\t"
