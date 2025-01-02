@@ -2,16 +2,21 @@ import sys
 import os
 import re
 import glob
+from pprint import pprint
 import subprocess
 import functools
 import logging
 import pathlib
+from pathlib import Path
 import click
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import product
+
+from rapidfuzz import process, fuzz
 
 import pyfaidx
 from pyfaidx import Fasta
@@ -30,16 +35,28 @@ from . import reduce
 
 logger = log.get_logger(__file__)
 
+TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "scripts"  # 2 levels up
+BASE_CONFIG = pathlib.Path(__file__).parent.parent / "config" / "base.toml"
 
 @click.group(chain=True)
 def main():
     pass
 
+@main.command()
+@click.option("-n", "--name", default="site-annotate.toml")
+def get_config(name):
+    import shutil
+    new_file = pathlib.Path(".").absolute() / name
+    print(f"Writing {new_file} ")
+    shutil.copy(BASE_CONFIG, new_file)
+     
 
-TEMPLATE_PATH = pathlib.Path(__file__).parent.parent / "scripts"  # 2 levels up
 
 
 def get_templates(TEMPLATE_PATH):
+    """
+        premade Rmd templates
+    """
 
     if not TEMPLATE_PATH.exists():
         logger.error(f"Template path not found: {TEMPLATE_PATH}")
@@ -173,7 +190,7 @@ def conf_to_dataframe(conf_file, set_index=False):
     return df
 
 
-def get_reader(file: str):
+def _xxget_reader(file: str):
     if file.endswith(".tsv"):
         return pd.read_table
     elif file.endswith(".csv"):
@@ -183,9 +200,32 @@ def get_reader(file: str):
     elif file.endswith(".conf"):
         return conf_to_dataframe
     else:
-        logger.error(f"do not know how to read file")
+        logger.error(f"do not know how to read file: {file}")
         return None
 
+
+def get_reader(file: str):
+    def wrapped_reader(reader):
+        def cleaner(*args, **kwargs):
+            df = reader(*args, **kwargs)
+            if isinstance(df, pd.DataFrame):
+                df = df.clean_names(strip_underscores=True)  # Standardize column names
+                for col in df.select_dtypes(include="object").columns:
+                    df[col] = df[col].apply(lambda x: preprocess_string(x) if isinstance(x, str) else x)
+            return df  # If it's not a DataFrame, return as is
+        return cleaner
+
+    if file.endswith(".tsv"):
+        return wrapped_reader(pd.read_table)
+    elif file.endswith(".csv"):
+        return wrapped_reader(pd.read_csv)
+    elif file.endswith(".xlsx"):
+        return wrapped_reader(pd.read_excel)
+    elif file.endswith(".conf"):
+        return wrapped_reader(conf_to_dataframe)
+    else:
+        logger.error(f"do not know how to read file")
+        return None
 
 def convert_tmt_label(shorthand):
     # Normalize the input by removing 'TMT' or 'TMT_' if present
@@ -206,16 +246,16 @@ def convert_tmt_label(shorthand):
         return f"TMT_{normalized_input}"
 
 
-def validate_metadata(df: pd.DataFrame):
+def validate_metadata(df: pd.DataFrame, default_runno=1, default_searchno=7):
     if "recno" not in df.columns:
         logger.error(f"recno not present in metadata file")
         raise ValueError(f"recno not present in metadata file")
     if "runno" not in df.columns:  # assume 1
-        logger.info("runno not found, assuming 1")
-        df["runno"] = 1
+        logger.info(f"runno not found, assuming {default_runno}")
+        df["runno"] = default_runno
     if "searchno" not in df.columns:  # assume 1
-        logger.info("searchno not found, assuming 7")
-        df["searchno"] = 7
+        logger.info(f"searchno not found, assuming {default_searchno}")
+        df["searchno"] = default_searchno
 
     for x in ("recno", "runno", "searchno"):
         df[x] = df[x].astype(str)
@@ -227,6 +267,11 @@ def validate_metadata(df: pd.DataFrame):
     if "label" in df.columns:
         df["label"] = df["label"].apply(convert_tmt_label)
         # can add a check here to assert unique by label and rec_run_search
+
+    if "name" not in df.columns:
+        logger.info("name not found, using rec_run_search")
+        df["name"] = df["rec_run_search"]
+    df.index = df["name"]
 
     return df
 
@@ -288,12 +333,24 @@ def validate_meta(
 @click.argument("metadata", type=click.Path(exists=True, dir_okay=False))
 @click.argument("data_dir", type=click.Path(exists=True, file_okay=False))
 def check_meta(metadata, data_dir):
+    """
+    used to check if metadata tabular file matches with tmt-integrator output file 
+    used internally in `merge_meta`
+    looks for rec_run_search string in metadtaa file (e.g. 12345_1_1) and matching
+    files (e.g. 12345_1_1_abundance_single-site_MD.tsv)
+    a searchno and runno are not strictly necessary in the metadata, and will take on default values(1, 7) if not provided. 
+    but critically, the `rec_runno_searchno` pattern string needs to match
+    TODO: allow partial matches and let runno and searchno take on default values if not provided
+    """
     meta_validated = validate_meta(metadata, data_dir)
     print(meta_validated.to_string())
     print("Success")
 
 
 @main.command()
+@click.option(
+    "--result-dir", type=click.Path(exists=True, file_okay=False, dir_okay=True)
+)
 @click.argument("metadata", type=click.Path(exists=True, dir_okay=False))
 @click.argument(
     "data_dir",
@@ -301,14 +358,32 @@ def check_meta(metadata, data_dir):
     default=click.Path("."),
     # show_default=True,
 )
-def merge_meta(metadata, data_dir):
+def merge_meta(result_dir, metadata, data_dir):
     r"""
-
     [DATA_DIR] is the directory where the data files are located
 
     default is current directory
 
+    Merge expression matrix from fragpipe output: 
+    starting with this file:
+        `tmt-report/abundance_single-site_MD.tsv`
+        and a config file with recno 12345
+    add the recno prefix and run:
+        `tmt-report/12345_abundance_single-site_MD.tsv`
+    and run:
+        `site-annotate merge-meta ./path/to/meta.tsv ./siteinfo-dir`
+    which will produce a gct file with metadata
+
+    Note only works with a single "plex".
+    recno information is only available from the prefix (12345) appended to the front of the emat
+
     """
+    data_dir = pathlib.Path(data_dir).absolute()
+
+    # if result_dir is None:
+    result_dir = result_dir or data_dir.parent
+    result_dir = pathlib.Path(result_dir).absolute()
+
     metadata = pathlib.Path(metadata).absolute()
     # can add try/except here to provide better error msg
     meta_validated = validate_meta(metadata, data_dir)
@@ -316,9 +391,160 @@ def merge_meta(metadata, data_dir):
     meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
     meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
 
+    outname = result_dir / (metadata.stem + "_siteinfo_combined")
     # ===
-    logger.info(f"wrote {meta_validated_fname}")
-    io.merge_metadata(meta_validated)
+    logger.info(f"writing {meta_validated_fname}")
+    res = io.merge_metadata(meta_validated, outname) # writes gct file to output
+
+
+def preprocess_string(s):
+    """
+    Preprocesses a string by removing spaces, underscores, and normalizing case.
+    """
+    return re.sub(r"[\s]+", "", s).lower()
+
+
+
+def match_columns(annotation_df, df, threshold=97):
+    """
+    Matches `sample` column values from annotation_df to df.columns
+    using fuzzy string matching with preprocessing.
+    
+    :param annotation_df: DataFrame containing a "sample" column.
+    :param df: DataFrame whose columns need to be matched.
+    :param threshold: Similarity threshold for a confident match (default=97%).
+    :return: A dictionary mapping `sample` values to best matches in `df.columns`.
+    """
+    # Extract and preprocess column names and samples to match
+
+    samples = [preprocess_string(sample) for sample in annotation_df["sample"]]
+    columns = [preprocess_string(col) for col in df.columns]
+
+    # Dictionary to store matches
+    matches = {}
+
+    # Perform fuzzy matching
+    for original_sample, processed_sample in zip(annotation_df["sample"], samples):
+        # Get best match using token_sort_ratio for better handling of word order
+        match, score, _ = process.extractOne(
+            processed_sample, columns, scorer=fuzz.token_sort_ratio
+        )
+        
+        if score / 100 >= threshold / 100:  # Normalize score to 0-1 range for comparison
+            # Find the original column name corresponding to the match
+            original_match = df.columns[columns.index(match)]
+            matches[original_sample] = original_match
+        else:
+            logger.warning(f"No high-confidence match for '{original_sample}' (Best: '{match}' with {score}%)")
+            matches[original_sample] = None  # No confident match
+
+    return matches
+
+
+@main.command()
+@click.option('-e', '--experiment-annotation')
+@click.argument(
+    "target",
+    type=click.Path(exists=True, file_okay=True),
+    default=click.Path("."),
+)
+def _add_experiment_annotation(experiment_annotation, target):
+    """
+    For FragPipe TMT-integrator output.
+
+    [experiment-annotation] is a tabular file generated from FragPipe.
+
+    [TARGET] target file or directory
+
+    :experiment-annotation:
+    expected columns are : `plex`, `channel` and `sample` 
+    other columns such as `condition` and `replicate`, which come from FragPipe, are not used
+    information about the "recno" should either be extractable from the `plex` column 
+    or a separate `recno` column can be manually added
+
+    :target:
+    example tmt-report/
+    -> reads in abundance_xx_yy.tsv
+        xx is a "level" such as gene, signle_site, protein. 
+            we are primarily interested in gene and signle_site
+        we compare all of this to the config file, experiment_annotation)
+        and attempt to merge.
+
+
+    """
+    print(target)
+    print()
+
+@main.command()
+@click.option(
+    '-e', '--experiment-annotation', 
+    type=click.Path(exists=True, file_okay=True), 
+    required=True,
+    help="Tabular file with columns: plex, channel, sample."
+)
+@click.argument(
+    "target",
+    type=click.Path(exists=True, file_okay=True),
+    default=".",
+)
+def add_experiment_annotation(experiment_annotation, target):
+    """
+    Merges FragPipe TMT-integrator output with an experiment annotation file.
+    """
+    # Validate inputs
+    try:
+        reader = get_reader(str(experiment_annotation))
+        annotation_df = reader(experiment_annotation)
+    except Exception as e:
+        raise click.ClickException(f"Error reading annotation file: {e}")
+
+    required_columns = {'plex', 'channel', 'sample'}
+    if not required_columns.issubset(annotation_df.columns):
+        raise click.ClickException(
+            f"Annotation file missing required columns: {required_columns - set(annotation_df.columns)}"
+        )
+
+    click.echo(f"Processing target: {target}")
+    click.echo(f"Loaded annotation file with {len(annotation_df)} rows.")
+
+    # Placeholder for additional processing
+    click.echo("Processing...")
+
+
+    def search_files(base_dir, middle_part="gene"):
+        """
+        Searches for all files in the base_dir that match the middle_part pattern.
+
+        :param base_dir: Directory to search in.
+        :param middle_part: Middle part of the filename to match.
+        :return: List of matching file paths.
+        """
+        # Define patterns
+        prefixes = ["abundance", "ratio"]
+        suffixes = ["GN.tsv", "MD.tsv", "None.tsv"]
+
+        # Generate all possible filenames using product
+        filenames = [f"{prefix}_{middle_part}_{suffix}" for prefix, suffix in product(prefixes, suffixes)]
+
+        # Check for file existence
+        matching_files = [str(Path(base_dir) / filename) for filename in filenames if (Path(base_dir) / filename).exists()]
+
+        return matching_files
+
+    import ipdb; ipdb.set_trace()
+    files = search_files(target)
+
+    for file in files:
+        print(file)
+        df = get_reader(file)(file)
+        cid_cols = set(annotation_df[["sample"]]) & set(df.columns)
+        # these should  match
+        #  now do the merge and save the results
+
+        # xx = match_columns(annotation_df, df)
+
+
+
 
 
 @main.command()
@@ -328,7 +554,7 @@ def merge_meta(metadata, data_dir):
     "--template",
     type=click.Choice(REPORT_TEMPLATES.keys()),
     required=False,
-    default="modi",
+    default="analyze_modi",
     show_default=True,
 )
 def report(
@@ -426,10 +652,10 @@ def report(
 
     robjects.r(
         """
-        data_dir <- ifelse(exists("data_dir"), output_dir, '.')
+        data_dir <- ifelse(exists("data_dir"), data_dir, '.')
         output_dir <- ifelse(exists("output_dir"), output_dir, '.')
-        config_file <- ifelse(exists("config"), config, NULL)
-        gct_file <- ifelse(exists("gct"), gct, NULL)
+        config_file <- ifelse(exists("config"), config, NA) # have to make it NA not null
+        gct_file <- ifelse(exists("gct"), gct, NA) # have to make it NA not null
         save_env <- ifelse(exists("save_env"), save_env, FALSE)
 
         print(paste0('output dir is: ', output_dir))
@@ -467,6 +693,7 @@ def report(
 )
 @click.option("--modi-abbrev", default="p", show_default=True)
 def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
+    raise ValueError('depreciated')
 
     template_file = REPORT_TEMPLATES["site_annotate_post_not_reduced"]
 
@@ -515,6 +742,17 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
     "-f", "--fasta", type=click.Path(exists=True, dir_okay=False), help="fasta file"
 )
 def run(cores, psms, output_dir, uniprot_check, fasta):
+    """
+    this is the main code for compiling site-level expression matrix from from PSMs table from FragPipe.
+    for each modi of interest there should be a column of form `aas_mass_shift`. 
+    So for phospho a column of form `sty_79_9663` 
+
+    critical columns include:
+        - spectrum
+        - sty_79_9663
+        - sty_79_9663_best_localization
+    ...
+    """
     if not psms:
         logger.warning("Warning: No PSM files provided.")
         return
