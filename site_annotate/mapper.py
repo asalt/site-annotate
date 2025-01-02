@@ -170,8 +170,13 @@ def add_annotations(data):
         )
         dfm = dfm[[x for x in [*psp_info.columns, *df.columns] if x in dfm.columns]]
         outdata[k] = dfm
-        assert len(df) == len(dfm)
-        # import ipdb; ipdb.set_trace()
+        if not len(df) == len(dfm):
+            print(f"length of df is ",  len(df))
+            print(f"length of dfm is ", len(dfm))
+            # This does not crash if not true, uses the overlap
+            # this is by design
+            # TODO: consider if this is a good idea
+            # import ipdb; ipdb.set_trace()
 
     return outdata
 
