@@ -125,6 +125,12 @@ load_config <- function(file_path, root_dir = NULL) {
   config$params$heatmap$z_score <- config$params$heatmap$z_score %||% TRUE
   config$params$heatmap$z_score_by %<>% is_null_config(.) %||% NULL
 
+
+  config$params$norm$normalize <- config$params$norm$normalize %||% FALSE
+  config$params$norm$log_transform <- config$params$norm$log_transform %||% FALSE
+
+  config$params$totalprotein$do <- config$params$totalprotein$do %||% FALSE
+
   if (is.null(config$params$advanced)) {
     config$params$advanced <- list()
   }
@@ -306,3 +312,21 @@ create_gct_from_datal <- function(datal){
     return(gct_object)
 }
 
+
+match_comparisons <- function(dir1, dir2){
+  dir1_files <- fs::dir_ls(dir1, glob = "*.tsv")
+  dir2_files <- fs::dir_ls(dir2, glob = "*.tsv")
+
+  if (length(dir1_files) == 0) {
+    warning("No files found in dir1. skipping")
+    return()
+  }
+
+  if (length(dir2_files) == 0) {
+    warning("No files found in dir2. skipping")
+    return()
+  }
+
+  # example file names
+
+}
