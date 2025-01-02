@@ -13,10 +13,10 @@ a tab separated file with sample information of the form:
 
 | name (must be unique) | recno | runno | searchno | label | group |
 | ---- | ----- | ----- | -------- | ----- | ----- |
-| ctrl-1 | 123 | 1 | 1 | 126 | ctrl |
-| ctrl-2 | 123 | 1 | 1 | 127N | ctrl |
-| treat-1 | 123 | 1 | 1 | 126 | treatment |
-| treat-2 | 123 | 1 | 1 | 127N | treatment |
+| ctrl-1 | 12345 | 1 | 1 | 126 | ctrl |
+| ctrl-2 | 12345 | 1 | 1 | 127N | ctrl |
+| treat-1 | 12345 | 1 | 1 | 126 | treatment |
+| treat-2 | 12345 | 1 | 1 | 127N | treatment |
 
 The last `group` column is optional but is a default standard variable
 name used internally for faceting / grouping.
@@ -44,8 +44,29 @@ style (to be updated and elaborated on later)
 
 
 
-## report
+## Analysis and Reporting
 
 
+### Merging data
+Combining fragpipe site-level expression data with meta data into a single gct file
+The resulting gct file is used for creating reports.
 
+`site-annotate merge-meta metadata.tsv /data-dir/`
+
+The `data-dir` should have rec_run_search prefixed site-level data
+corresponding to the recno | runno | searchno specified in the metadata file.
+
+so `data-dir` may look like:
+`
+  data-dir/
+    - 12345_1_1_abundance_single-site_MD.tsv
+`
+the gct file will be saved within the same data directory.
+
+TODO: add normalization options 
+
+### Reporting
+
+
+`site-annotate report -m metadata.tsv -c config.toml --gct /path/to/gct/file`
 

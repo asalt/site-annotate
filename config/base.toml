@@ -1,6 +1,9 @@
 [params]
 batch = ""  # leave unspecified for null
 
+[params.norm]
+normalize = false
+log_transform = false
 
 [params.heatmap]
 do = true
@@ -30,6 +33,11 @@ do = true
 formula = "~0 + group"
 contrasts = []
 top_n = [25, 50, 75, 100]
+
+
+[params.totalprotein]
+do = true
+volcanodir = ''
 
 [params.extra]
 sample_order = []
