@@ -114,6 +114,8 @@ load_config <- function(file_path, root_dir = NULL) {
   #   config$params$batch <- NULL
   # }
 
+
+
   config$params$limma$formula <- is_null_config(config$params$limma$formula)
   if (!is.null(config$params$limma$formula)) {
     config$params$limma$formula %<>% as.formula
@@ -141,6 +143,13 @@ load_config <- function(file_path, root_dir = NULL) {
     root_dir <- getwd()
   }
 
+
+  config$params$gct_file <- is_null_config(config$params$gct_file)
+  if (!is.null(config$params$gct_file)) {
+    config$params$gct_file <- ensure_absolute_path(config$params$gct_file, root_dir)
+  }
+
+
   # handle any lists of files that may have relative paths
   if (is.null(config$params$heatmap$selection)){
     config$params$heatmap$selection <- list()
@@ -158,6 +167,10 @@ load_config <- function(file_path, root_dir = NULL) {
       }
     )
     config$params$heatmap$selection$file_list <- purrr::list_flatten(config$params$heatmap$selection$file_list)
+  }
+  if ((config$params$heatmap$selection$do %||% FALSE) && (is.null(config$params$heatmap$selection$file_list))  ){
+    warning("No files found in the selection list. setting heatmap$selection$do to FAlSE")
+    config$params$heatmap$selection$do <- FALSE
   }
 
 
@@ -241,20 +254,20 @@ read_genelist_file <- function(file_path,
   }
 
   # now sort by another column if it exists
-  possible_col_for_sort <-maybe_match_arg(colnames(df), c("pvalue", "p_value"), several.ok = TRUE)
+  possible_col_for_sort <- maybe_match_arg(colnames(df), c("pvalue", "p_value"), several.ok = TRUE)
   if (!is.null(possible_col_for_sort)) {
     if (length(possible_col_for_sort) > 1) possible_col_for_sort <- possible_col_for_sort[1]
     df <- df %>% arrange(!!sym(possible_col_for_sort))
   }
 
-  possible_col_for_facet <- maybe_match_arg(colnames(df), possible_contrast_cols, several.ok = TRUE)
-  if (!is.null(possible_col_for_facet)) {
-    if (length(possible_col_for_facet) > 1) possible_col_for_facet <- possible_col_for_facet[1]
-    vals <- unique(df[[possible_col_for_facet]])
-    df <- purrr::map(vals,
-      ~ df %>% filter(!!sym(possible_col_for_facet) == .x)
-    ) %>% set_names(vals)
-  }
+  # possible_col_for_facet <- maybe_match_arg(colnames(df), possible_contrast_cols, several.ok = TRUE)
+  # if (!is.null(possible_col_for_facet)) {
+  #   if (length(possible_col_for_facet) > 1) possible_col_for_facet <- possible_col_for_facet[1]
+  #   vals <- unique(df[[possible_col_for_facet]])
+  #   df <- purrr::map(vals,
+  #     ~ df %>% filter(!!sym(possible_col_for_facet) == .x)
+  #   ) %>% set_names(vals)
+  # }
 
   return(df)
 
