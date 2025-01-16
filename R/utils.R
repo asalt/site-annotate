@@ -1,4 +1,6 @@
 suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(stringr))
 
 
 normalize <- function(datal, id_col = "site_id") {
@@ -127,11 +129,11 @@ normalize_gct <- function(gct, log_transform=FALSE) {
     melt_gct() %>%
     group_by(id.y) %>%
     dplyr::mutate(value_norm = value/median(value, na.rm=T)) %>%
-    dplyr::ungroup() 
+    dplyr::ungroup()
 
     if (log_transform) {
         res %<>% mutate(value_norm = log2(value_norm))
-    } 
+    }
 
   # make a new gct and return
   res <- res %>%
@@ -345,8 +347,6 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
     stop("Package 'stringr' is required but not installed.")
   }
 
-  library(dplyr)
-  library(stringr)
 
   # Check if .mat is a data frame
   if (!is.data.frame(.mat)) {
@@ -385,7 +385,7 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
           str_wrap(width = 48)
       )
     condensed_data %<>% rename(sitename = aggregated_sitename)
-    if ('ms_lit' %in% colnames(condensed_data)){
+    if (!'ms_lit' %in% colnames(condensed_data)){
       condensed_data %<>% rename(ms_lit = aggregated_ms_lit, lt_lit = aggregated_lt_lit)
     }
   }
