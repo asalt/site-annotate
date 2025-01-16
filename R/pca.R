@@ -2,18 +2,22 @@ library(here)
 
 source(file.path(here(), "R", "lazyloader.R"))
 
-
-do_pca <- function(gct,  scale = T) {
+# this only works for sitename level 
+do_pca <- function(gct,  scale = T, removeVar=0.1) {
 
   library(PCAtools)
 
   .mat <- mat(gct)
   .mat[is.na(.mat)] <- min(.mat, na.rm = T)
+  if ("sitename" %in% colnames(gct@rdesc)){
+      rownames(.mat) <- gct@rdesc[rownames(.mat), "sitename"] %>% make.unique()
+  }
   pca_obj <- PCAtools::pca(
     .mat,
     metadata = gct@cdesc,
     center = T,
-    scale = scale
+    scale = scale,
+    removeVar=removeVar
   )
 
   return(pca_obj)
@@ -24,11 +28,12 @@ plot_biplot <- function(
     top_pc = 3,
     showLoadings = T,
     labSize = 1.8,
-    pointSize = 3,
+    pointSize = 3.2,
     sizeLoadingsNames = 2,
     colby = NULL, # or a string like 'group'
     shape = NULL, # or a string like 'group'
     encircle = !is.null(colby),
+    ntopLoadings = 5,
     title = "",
     basename = "pca_biplot_",
     ...) {
@@ -106,7 +111,7 @@ plot_biplot <- function(
           title = title,
           max.overlaps = Inf,
           maxoverlapsConnectors = Inf,
-          ntopLoadings = 5,
+          ntopLoadings = ntopLoadings %||% 5,
         ) +
           xlim(-.max_x, .max_x) +
           ylim(-.max_y, .max_y) +
@@ -123,7 +128,7 @@ plot_biplot <- function(
           )
 
         filename <- paste0(basename, "_", .x1, "_", .x2, ".pdf")
-        ggplot2::ggsave(filename, plt, width = 8, height = 8)
+        ggplot2::ggsave(filename, plt, width = 6.2, height = 5.8)
         return(plt)
       } # exit inner
     ) # exit outer
@@ -199,6 +204,14 @@ make_heatmap_from_loadings <- function(
 
 
   top_loadings <- get_top_loadings(pca_object, components = components, rangeRetain = 0.05, limit = Inf)
+  # top_loadings returns a dataframe with rownames as features and a column called "var" that is equal to rownames(top_loadings)
+  # and floats PC1, 2, 3 .. and boolean PC1_member, PC2_member, PC3_member, ... (member being within the top 5%)
+browser()
+
+  if ("sitename" %in% colnames(gct_object@rdesc)){  # this needs to not be hardcoded or is not usable for other dtypes,  but is the case for heatmap too
+    site_ids <- gct_object@rdesc %>% dplyr::filter(sitename %in% rownames(top_loadings))
+  }
+
   submat <- gsea_object %>% name_cleaner() %>% filter(pathway %in% rownames(top_loadings))
 
   ra <- ComplexHeatmap::rowAnnotation(
