@@ -5,7 +5,46 @@ source(file.path(here("R", "lazyloader.R")))
 util_tools <- get_tool_env("utils")
 
 
-run_limma <- function(gct, config) {
+impute_with_draw <- function(values, seed = 123, mean_adjust = -1.8, sd_adjust = 0.8) {
+  # Set seed for reproducibility
+  set.seed(seed)
+
+  # Ensure the input is numeric and has at least one non-NA value
+  if (!is.numeric(values) || all(is.na(values))) {
+    stop("Input must be a numeric vector with at least one non-NA value.")
+  }
+
+  # Return early if there are no missing values
+  if (all(!is.na(values))) {
+    return(values)
+  }
+
+  # Calculate mean and standard deviation of non-NA values
+  original_mean <- mean(values, na.rm = TRUE)
+  original_sd <- sd(values, na.rm = TRUE)
+
+  # Adjust mean and sd
+  adjusted_mean <- original_mean + mean_adjust
+  adjusted_sd <- original_sd * sd_adjust
+
+  # Number of missing values
+  n <- sum(is.na(values))
+
+  # Generate 8 random draws and average them
+  random_draw_final <- rowMeans(
+    matrix(rnorm(n * 8, mean = adjusted_mean, sd = adjusted_sd), nrow = 8)
+  )
+
+  # Replace NA values with the random draws
+  values[is.na(values)] <- random_draw_final
+
+  # Return the imputed vector
+  return(values)
+}
+
+
+
+run_limma <- function(gct, config, do_impute = TRUE) {
   .formula <- config$limma$formula %||% as.formula("~0 + group")
   print(paste0("formula is : ", .formula))
   mod <- model.matrix(.formula, gct@cdesc)
@@ -13,6 +52,10 @@ run_limma <- function(gct, config) {
   # rownames(mod) <- meta$name
   .mat <- mat(gct)
   colnames(mod) <- make.names(colnames(mod))
+  print(mod)
+  # or impute here
+  if (do_impute) .mat <-  impute_with_draw(.mat)
+  .mat[is.na(.mat)] <- 0
 
   generate_contrasts <- function(meta, group_var) {
     # Get unique levels of the grouping variable
