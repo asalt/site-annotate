@@ -11,7 +11,7 @@
 library(here)
 
 source(file.path(here(), "R", "lazyloader.R"))
-util_tools <- get_tool_env("utils")
+# util_tools <- get_tool_env("utils")
 
 hide_zero <- function(x) {
   sapply(x, function(y) ifelse(y == 0, "", as.character(y)))
@@ -231,6 +231,7 @@ sort_by_number_after_underscore <- function(strings) {
     nchar(.mat$ms_lit),
     na.rm = TRUE
   )
+  nchar_max <- nchar_max %||% 20
 
   .annot_font_size <- 7
   anno_width <- unit((nchar_max + 1) * (.annot_font_size / 12), "picas")
@@ -400,6 +401,9 @@ process_cut_by <- function(cut_by, cdesc) {
   if (is.null(cut_by)) {
     return(NULL)
   }
+  if (is.na(cut_by)) {
+    return(NULL)
+  }
 
   # If cut_by is a single string containing ':', split it into a vector
   if (is.character(cut_by) && length(cut_by) == 1 && grepl(":", cut_by)) {
@@ -453,14 +457,17 @@ make_heatmap_fromgct <- function(
     meta_to_exclude = NULL, # if NULL filters nothing out
     do_condense_groups = TRUE,
     ...) {
+
   print("making heatmap from gct")
+  util_tools <- get_tool_env("utils")
+
   # gct <- subgct
   # gct@cdesc$treat <-
   #   factor(.gct@cdesc$treat , levels = c("untreated", "carboplatin", "IMT", "carboplatin_IMT"), ordered = T)
 
   default_meta_to_exclude <- c(
     "recno", "runno", "searchno", "label", "expr_col", "expr_file",
-    "assay", "rec_run_search"
+    "assay", "rec_run_search", "name", "replicate", "id", "sample"
   )
   # If user specifies additional meta_to_exclude, merge with defaults
   if (!is.null(meta_to_exclude)) {
@@ -487,18 +494,31 @@ make_heatmap_fromgct <- function(
   rdesc <- gct %>%
     cmapR::melt_gct(keep_cdesc = FALSE, suffixes = c(".x", ".y")) %>%
     distinct(id.x, .keep_all = TRUE)
-  rdesc <- rdesc %>%
-    dplyr::select(id.x, ms_lit, lt_lit, sitename) %>% # distinct() %>%
-    mutate(
-      ms_lit = replace_na(ms_lit, 0),
-      lt_lit = replace_na(lt_lit, 0)
-    )
+  if ("ms_lit" %in% colnames(rdesc) && "lt_lit" %in% colnames(rdesc)) {
+    rdesc <- rdesc %>%
+      dplyr::select(id.x, ms_lit, lt_lit, sitename) %>% # distinct() %>%
+      mutate(
+        ms_lit = replace_na(ms_lit, 0),
+        lt_lit = replace_na(lt_lit, 0)
+      )
+  } else {
+    include_row_annotations <- FALSE
+  }
+  if ((!"sitename" %in% colnames(rdesc)) == TRUE) {
+    rdesc$sitename <- rdesc$id.x
+  }
   # note the default call of data.frame has check.names = TRUE
   mat_data <- as.data.frame(gct@mat)[rdesc$id.x, ] %>%
     rownames_to_column(var = "id.x") %>%
-    left_join(rdesc, by = "id.x")
+    left_join(rdesc %>% dplyr::select(any_of(c("sitename", "sitename2", "ms_lit", "lt_lit", "id.x"))),
+               by = "id.x")
   if (do_condense_groups) {
-    mat_data <- util_tools$condense_groups(mat_data) %>% rename(sitename = aggregated_sitename, ms_lit = aggregated_ms_lit, lt_lit = aggregated_lt_lit)
+    tryCatch({
+      mat_data <- util_tools$condense_groups(mat_data)
+    }, error = function(e) {
+      warning("Error in condensing groups. Skipping condensing.")
+    })
+    # mat_data <- util_tools$condense_groups(mat_data)
   }
 
   row_labels <- mat_data$sitename
@@ -510,13 +530,6 @@ make_heatmap_fromgct <- function(
     heatmap_matrix_height <- unit(nrow(mat_data) * .2, "in")
   }
 
-  cut_by <- process_cut_by(cut_by, gct@cdesc)
-  print("***")
-  print("***")
-  print("***")
-  print("***")
-  print("***")
-  print(cut_by)
 
   # if (!is.null(cut_by) && cut_by %in% colnames(gct@cdesc)) {
   #   cut_by <- gct@cdesc[[cut_by]]
@@ -527,18 +540,19 @@ make_heatmap_fromgct <- function(
 
 
   # Determine maximum number of characters for annotation width
-  nchar_max <- max(
-    nchar(mat_data$lt_lit),
-    nchar(mat_data$ms_lit),
-    na.rm = TRUE
-  )
 
   .annot_font_size <- 7
-  anno_width <- unit((nchar_max + 1) * (.annot_font_size / 12), "picas")
-
 
   row_annotations <- NULL
+  nchar_max <- 25
+  # browser()
+  anno_width <- unit((nchar_max + 1) * (.annot_font_size / 12), "picas")
   if (include_row_annotations) {
+    nchar_max <- max(
+      nchar(mat_data$lt_lit),
+      nchar(mat_data$ms_lit),
+      na.rm = TRUE
+    )
     row_annotations <- HeatmapAnnotation(
       lt_lit = anno_text(
         hide_zero(mat_data$lt_lit) %>% str_wrap(width = 10, whitespace_only = FALSE),
@@ -580,7 +594,6 @@ make_heatmap_fromgct <- function(
   message(meta_to_include)
   message(colnames(cmeta))
   .colors <- util_tools$create_named_color_list(cmeta, colnames(cmeta))
-  # browser()
   column_annotations <- ComplexHeatmap::columnAnnotation(
     df = cmeta,
     col = .colors,
@@ -598,6 +611,36 @@ make_heatmap_fromgct <- function(
 
   dist_no_na <- util_tools$dist_no_na
 
+  column_title_fontsize <- 13
+  if (!is.null(cut_by)){
+    n_unique <- length(unique(gct@cdesc[[cut_by]] ))
+    cut_ratio <- n_unique / length(colnames(gct@mat))
+    print(paste0("cut_ratio: ", cut_ratio))
+    if (cut_ratio > 0.1){
+      column_title_fontsize <- column_title_fontsize - 2
+    }
+    if (cut_ratio > 0.2){
+      column_title_fontsize <- column_title_fontsize - 2
+    }
+    if (cut_ratio > 0.4){
+      column_title_fontsize <- column_title_fontsize - 2
+    }
+    if (cut_ratio > 0.8){
+      column_title_fontsize <- column_title_fontsize - 2
+    }
+  }
+  print(paste0("column_title_fontsize: ", column_title_fontsize))
+
+
+
+  cut_by <- process_cut_by(cut_by, gct@cdesc)
+  print("***")
+  print("***")
+  print("***")
+  print("***")
+  print("***")
+  print(cut_by)
+
   ht <- ComplexHeatmap::Heatmap(
     mat_data[, colnames(gct@mat)],
     width = heatmap_matrix_width,
@@ -611,7 +654,8 @@ make_heatmap_fromgct <- function(
 
     row_title = row_title,
     # column_title = column_title,
-    column_title_gp = gpar(fontsize = 9, fontface = "bold", just = "left"),
+    column_title_gp = gpar(fontsize = column_title_fontsize, fontface = "bold", just = "left"),
+    column_title_rot = 45,
     column_labels = gct@cdesc$id, # id should always be here
 
     column_split = cut_by,
