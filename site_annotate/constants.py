@@ -42,3 +42,51 @@ def get_all_columns(iterable):
     matches = [pattern.match(it) for it in iterable]
     matches = [x.group() for x in filter(None, matches)]
     return matches
+
+
+def get_all_possible_id_cols():
+
+    return [
+        "gene",
+        "acc_id",
+        "hu_chr_loc",
+        "mod_rsd",
+        "site_grp_id",
+        "organism",
+        "mw_kd",
+        "domain",
+        "site_+_7_aa",
+        "lt_lit",
+        "ms_lit",
+        "ms_cst",
+        "cst_cat#",
+        "ambiguous_site",
+        "psp_position",
+        "fifteenmer",
+        "sitename",
+        "uniprot_id",
+        "ENSP",
+        "ENST",
+        "ENSG",
+        "geneid",
+        "taxon",
+        "symbol",
+        "protein_start",
+        "protein_end",
+        "protein_start_psp",
+        "position_relative",
+        "position_absolut",
+        "position_absolut_psp",
+        "sitename2",
+        # "all_possible_positions",
+        # "all_possible_positions_psp",
+        "AA",
+        "site_id",
+        # "hyperscore_best",
+        # "rtscore_best",
+        # "delta_mass_best",
+        # "highest_prob_best",
+    ]
+
+
+POSSIBLE_SITE_ID_COLS = get_all_possible_id_cols()

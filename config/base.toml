@@ -1,9 +1,14 @@
 [params]
-batch = ""  # leave unspecified for null
+gct_file = ''
 
 [params.norm]
 normalize = false
 log_transform = false
+batch = ""  # leave unspecified for null
+
+[params.filter]
+non_zeros = 1.0
+nonzero_subgroup = ''
 
 [params.heatmap]
 do = true
@@ -27,6 +32,10 @@ do = true
 color = "group"
 marker = ""
 max_pc = 3
+scale = true
+show_labels = true
+width = 6.5
+height = 7.2
 
 [params.limma]
 do = true
