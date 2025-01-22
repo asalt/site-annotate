@@ -42,6 +42,7 @@ impute_with_draw <- function(values, seed = 123, mean_adjust = -1.8, sd_adjust =
   return(values)
 }
 
+impute_with_draw <- util_tools$impute_with_draw
 
 
 run_limma <- function(gct, config, do_impute = TRUE) {

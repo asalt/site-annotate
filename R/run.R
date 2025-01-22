@@ -49,6 +49,24 @@ run <- function(
     stop()
   }
 
+
+  if (config$norm$normalize %||% FALSE){
+      print("normalizing..")
+      gct <- util_tools$normalize_gct(gct, log_transform=config$norm$log_transform %||% TRUE)
+  }
+
+  #if (config$$non_zeros %||% "median" == "median"){
+  print("filtering...")
+  gct <- util_tools$filter_nonzeros(gct,
+                                    config$filter$non_zeros %||% 1.0,
+                                    config$filter$nonzero_subgroup %||% NULL
+                                    )
+
+  if (is.character(config$norm$batch) %||% FALSE){
+      gct <- util_tools$do_combat(gct, by=config$norm$batch)
+  }
+  
+
   if (!is.null(config$extra$sample_exclude)) {
     to_exclude <- config$extra$sample_exclude %||% NULL
     to_exclude <- intersect(rownames(gct@cdesc), to_exclude)
@@ -67,13 +85,7 @@ run <- function(
 
   FRIENDLY_NAME <- suboutdir %>% str_replace_all("_", " ") %>% str_replace(., "\\d+$", "") %>% str_wrap(width = 60)
 
-  # heatmap of everything
-  if (config$norm$normalize){
-    gct <- util_tools$normalize_gct(gct, log_transform=config$norm$log_transform %||% FALSE)
-    }
   gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by)
-
-
 
 
   if (config$heatmap$selection$do %||% FALSE) {
@@ -94,14 +106,18 @@ run <- function(
 
         file_data <- io_tools$read_genelist_file(the_file)
 
-        subgct_z <- gct_z %>% subset_gct(rid = file_data$id)
+        subgct_z <- gct_z %>% subset_gct(rid = file_data$id %||% file_data[[1]]) # fallback 
         print(paste('nrow submat gct: ', nrow(subgct_z@mat)))
         if (nrow(subgct_z@mat) == 0) {
           message(paste0("No rows found in ", the_file, ", skipping"))
           return()
         }
-        if (nrow(subgct_z@mat) > 199) {
+        if (nrow(subgct_z@mat) > 499) {
           message(paste("too many rows", the_file, ", skipping"))
+          print(length(file_data$id))
+          print(head(file_data))
+          print(file_data$id)
+          # browser() 
           return()
         }
         .nrow <- nrow(subgct_z@mat)
@@ -173,18 +189,26 @@ run <- function(
     param_grid %>% purrr::pmap(~ {
       .cut_by <- ..1
       .cluster_columns <- ..2
-      ht_draw_code <- gct_z %>% heatmap_tools$make_heatmap_fromgct(
+
+      # hack
+      # also not working
+      rids_to_keep <- gct_z@rdesc %>% distinct(fifteenmer, .keep_all = TRUE) %>% pull(id) #%>% sample(4002)
+      .gct_z <- gct_z %>% subset_gct(rid = rids_to_keep)
+
+      ht_draw_code <- .gct_z %>% heatmap_tools$make_heatmap_fromgct(
         show_row_names = FALSE,
         optimal_size = FALSE,
         cut_by = .cut_by,
         cluster_columns = .cluster_columns,
         include_row_annotations = FALSE,
+        meta_to_include = config$heatmap$legend_include %||% NULL,
+        meta_to_exclude = config$heatmap$legend_exclude %||% NULL,
         column_title=FRIENDLY_NAME
       )
 
-      .nrow <- nrow(gct_z@mat)
-      .ncol <- ncol(gct_z@mat)
-      width <- 6 + (.ncol * .26)
+      .nrow <- nrow(.gct_z@mat)
+      .ncol <- ncol(.gct_z@mat)
+      width <- 6.4 + (.ncol * .26)
       height <- 7.8
 
 
@@ -214,7 +238,7 @@ run <- function(
           ht_draw_code()
           dev.off()
         },
-        error = function(e) print(e)
+        error = function(e){ print("there was a problem drawing the heatmap"); print(e) }
       )
     }) # end of pmap of param grid
   } # end of if heatmap
@@ -487,3 +511,5 @@ run <- function(
 
 }
 } # end of run
+
+

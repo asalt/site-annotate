@@ -3,6 +3,48 @@ suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(stringr))
 
 
+
+
+impute_with_draw <- function(values, seed = 123, mean_adjust = -1.8, sd_adjust = 0.8) {
+  # Set seed for reproducibility
+  set.seed(seed)
+
+  # Ensure the input is numeric and has at least one non-NA value
+  if (!is.numeric(values) || all(is.na(values))) {
+    stop("Input must be a numeric vector with at least one non-NA value.")
+  }
+
+  # Return early if there are no missing values
+  if (all(!is.na(values))) {
+    return(values)
+  }
+
+  # Calculate mean and standard deviation of non-NA values
+  original_mean <- mean(values, na.rm = TRUE)
+  original_sd <- sd(values, na.rm = TRUE)
+
+  # Adjust mean and sd
+  adjusted_mean <- original_mean + mean_adjust
+  adjusted_sd <- original_sd * sd_adjust
+
+  # Number of missing values
+  n <- sum(is.na(values))
+
+  # Generate 8 random draws and average them
+  random_draw_final <- rowMeans(
+    matrix(rnorm(n * 8, mean = adjusted_mean, sd = adjusted_sd), nrow = 8)
+  )
+
+  # Replace NA values with the random draws
+  values[is.na(values)] <- random_draw_final
+
+  # Return the imputed vector
+  return(values)
+}
+
+
+
+
 normalize <- function(datal, id_col = "site_id") {
   # Ensure that 'id_col' exists in 'datal'
   if (!id_col %in% names(datal)) {
@@ -40,7 +82,7 @@ normalize <- function(datal, id_col = "site_id") {
     dplyr::arrange(desc(n))
 
   # Determine 'maxn' based on 'counts' and 'sample names'
-  maxn <- min(max(counts$n), length(unique(datal[['name']])))
+  maxn <- min(max(counts$n), length(unique(datal[["name"]])))
 
   # Identify groups to keep
   tokeep <- counts %>%
@@ -58,16 +100,18 @@ normalize <- function(datal, id_col = "site_id") {
 
 create_named_color_list <- function(df, columns) {
   # Matplotlib default colors (from memory)
-  matplotlib_colors <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-                         "#9467bd", "#8c564b", "#e377c2",
-                         "#bcbd22", "#17becf")
+  matplotlib_colors <- c(
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+    "#9467bd", "#8c564b", "#e377c2",
+    "#bcbd22", "#17becf"
+  )
 
   # Initialize an empty list to store the result
   color_list <- list()
 
   # Iterate over each column
   for (col_name in columns) {
-    df[[col_name]] <-  df[[col_name]] %>% replace_na("NA")
+    df[[col_name]] <- df[[col_name]] %>% replace_na("NA")
     unique_vals <- unique(df[[col_name]])
     # message(paste0('unique values are ', unique_vals))
     n_vals <- length(unique_vals)
@@ -122,18 +166,19 @@ dist_no_na <- function(mat) {
   return(edist)
 }
 
-normalize_gct <- function(gct, log_transform=FALSE) {
+normalize_gct <- function(gct, log_transform = FALSE) {
+  # grouping by species could be implemented here
   # log_msg(msg="zscoring gct file by row")
   # log_msg(msg=paste0("group_by is set to: ", group_by))
   res <- gct %>%
     melt_gct() %>%
     group_by(id.y) %>%
-    dplyr::mutate(value_norm = value/median(value, na.rm=T)) %>%
+    dplyr::mutate(value_norm = value / median(value, na.rm = T)) %>%
     dplyr::ungroup()
 
-    if (log_transform) {
-        res %<>% mutate(value_norm = log2(value_norm))
-    }
+  if (log_transform) {
+    res %<>% mutate(value_norm = log2(value_norm))
+  }
 
   # make a new gct and return
   res <- res %>%
@@ -143,9 +188,9 @@ normalize_gct <- function(gct, log_transform=FALSE) {
   rownames(res) <- res$id.x
   res$id.x <- NULL
   res <- as.matrix(res)
-  .minval <- res[ res > -Inf] %>% min(na.rm=T)
-  res[res == -Inf] = NA
-  res <- res + abs(.minval*1.1)
+  .minval <- res[res > -Inf] %>% min(na.rm = T)
+  res[res == -Inf] <- NA
+  # res <- res + abs(.minval*1.1)
   rdesc <- gct@rdesc
   cdesc <- gct@cdesc
 
@@ -188,7 +233,7 @@ scale_gct <- function(gct, group_by = NULL) {
   # make a new gct and return
   res <- res %>%
     dplyr::select(id.x, id.y, zscore) %>%
-    tidyr::pivot_wider(id_cols=id.x, names_from = id.y, values_from = zscore) %>%
+    tidyr::pivot_wider(id_cols = id.x, names_from = id.y, values_from = zscore) %>%
     as.data.frame()
   rownames(res) <- res$id.x
   res$id.x <- NULL
@@ -225,7 +270,7 @@ infer_ordered_factor <- function(column) {
   # Find the minimum numeric value
   min_num <- min(numeric_values, na.rm = TRUE)
   if (is.infinite(min_num)) {
-    min_num <- 0  # Default to 0 if no numeric values are found
+    min_num <- 0 # Default to 0 if no numeric values are found
   }
 
   # Initialize order values with numeric values
@@ -239,10 +284,10 @@ infer_ordered_factor <- function(column) {
 
     # Assign special order value for "veh" or "vehicle"
     is_vehicle <- grepl("^veh$|^vehicle$", non_numeric_values)
-    order_values[non_numeric_indices[is_vehicle]] <- min_num - 2  # Highest priority
+    order_values[non_numeric_indices[is_vehicle]] <- min_num - 2 # Highest priority
 
     is_ctrl <- grepl("^veh$|^control$", non_numeric_values)
-    order_values[non_numeric_indices[is_ctrl]] <- min_num - 2  # Highest priority
+    order_values[non_numeric_indices[is_ctrl]] <- min_num - 2 # Highest priority
 
     # Assign next priority to other non-numeric values
     order_values[non_numeric_indices[!is_vehicle]] <- min_num - 1
@@ -297,13 +342,16 @@ filter_observations <- function(df, column, threshold_ratio) {
   counts <- df %>%
     filter(!is.na(log2_val)) %>%
     group_by(site_id, !!sym(column)) %>%
-    summarize(n = n(), .groups = 'drop')
+    summarize(n = n(), .groups = "drop")
 
   # Step 2: Compute total counts per column factor
   # total_counts <- df %>%
   #   group_by(id.y, !!sym(column)) %>%
   #   summarize(total_n = sum(n), .groups = 'drop')
-  total_counts <-  df %>% distinct(name, .keep_all = T) %>% group_by(!!sym(column)) %>% summarize(total_n = n())
+  total_counts <- df %>%
+    distinct(name, .keep_all = T) %>%
+    group_by(!!sym(column)) %>%
+    summarize(total_n = n())
 
   # Step 3: Join counts with total_counts and calculate ratio per group
   counts <- counts %>%
@@ -321,7 +369,7 @@ filter_observations <- function(df, column, threshold_ratio) {
   message(paste("Number of groups meeting the threshold_ratio of", threshold_ratio, ":", nrow(tokeep)))
 
   # Step 6: Inspect 'tokeep' DataFrame
-  if(nrow(tokeep) > 0){
+  if (nrow(tokeep) > 0) {
     print(tokeep)
   } else {
     message("No groups meet the threshold ratio. Consider lowering the threshold_ratio.")
@@ -365,7 +413,10 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
   selected_non_numeric <- names(.mat)[non_numeric_cols]
 
   # Group by all numeric columns and summarize non-numeric columns
-  condensed_data <- .mat %>%
+  .mask <- .mat[is.na(.mat)]
+  .mat_filled <- .mat %>% mutate(across(all_of(selected_numeric), ~ ifelse(is.na(.), 0, .)))
+  # .mat[is.na(.mat)] <- 0 # this might break something
+  condensed_data <- .mat_filled %>%
     select(all_of(c(selected_non_numeric, selected_numeric))) %>%
     group_by(across(all_of(selected_numeric))) %>%
     summarize(
@@ -374,18 +425,18 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
         ~ paste(sort(unique(.)), collapse = "/"),
         .names = "aggregated_{col}"
       ),
-      .groups = 'drop'
+      .groups = "drop"
     )
 
   # Format 'sitename' for better readability, if present
   if ("aggregated_sitename" %in% names(condensed_data)) {
     condensed_data <- condensed_data %>%
       mutate(
-        aggregated_sitename = str_replace_all(aggregated_sitename, '/', ' / ') %>%
+        aggregated_sitename = str_replace_all(aggregated_sitename, "/", " / ") %>%
           str_wrap(width = 48)
       )
     condensed_data %<>% rename(sitename = aggregated_sitename)
-    if (!'ms_lit' %in% colnames(condensed_data)){
+    if (!"ms_lit" %in% colnames(condensed_data)) {
       condensed_data %<>% rename(ms_lit = aggregated_ms_lit, lt_lit = aggregated_lt_lit)
     }
   }
@@ -394,14 +445,78 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
 }
 
 
+condense_groups <- function(.mat, include_annotations = TRUE) {
+  # Make sure .mat is a data frame or tibble
+  if (!is.data.frame(.mat)) {
+    stop("Input '.mat' must be a data frame or tibble.")
+  }
+
+  # Decide which columns are "annotation" columns vs numeric
+  required_non_numeric_exclusions <- if (include_annotations) c("ms_lit", "lt_lit") else character(0)
+  numeric_cols <- sapply(.mat, is.numeric) & !names(.mat) %in% required_non_numeric_exclusions
+  non_numeric_cols <- !numeric_cols
+
+  selected_numeric <- names(.mat)[numeric_cols]
+  selected_non_numeric <- names(.mat)[non_numeric_cols]
+
+  # A sentinel value that doesn't appear naturally in your data
+  sentinel_val <- -9999999
+
+  # Temporarily replace NA with the sentinel
+  .mat_sentinel <- .mat %>%
+    mutate(across(all_of(selected_numeric), ~ ifelse(is.na(.), sentinel_val, .)))
+
+  # Now group by the numeric columns (with sentinel in place) and aggregate the non-numeric
+
+  condensed_data <- .mat_sentinel %>%
+    select(all_of(c(selected_non_numeric, selected_numeric))) %>%
+    mutate(across(all_of(selected_numeric), ~ round(., digits = 5))) %>%
+    group_by(across(all_of(selected_numeric))) %>%
+    summarize(
+      across(
+        all_of(selected_non_numeric),
+        ~ paste(sort(unique(.)), collapse = "/"),
+        .names = "aggregated_{col}"
+      ),
+      .groups = "drop"
+    )
+  condensed_data %<>%
+    mutate(across(all_of(selected_numeric), ~ na_if(., sentinel_val)))
+  # Revert the sentinel back to NA
+  # browser()
+
+  # (Optional) Format 'sitename' nicely, if present
+  if ("aggregated_sitename" %in% names(condensed_data)) {
+    condensed_data <- condensed_data %>%
+      mutate(
+        aggregated_sitename = str_replace_all(aggregated_sitename, "/", " / ") %>%
+          str_wrap(width = 48)
+      ) %>%
+      rename(sitename = aggregated_sitename)
+
+    # If ms_lit/lt_lit are expected, rename them
+    if (!"ms_lit" %in% colnames(condensed_data)) {
+      condensed_data <- condensed_data %>%
+        rename(
+          ms_lit = aggregated_ms_lit,
+          lt_lit = aggregated_lt_lit
+        )
+    }
+  }
+
+  return(condensed_data)
+}
+
+
+
 
 # Define the select_top_n function
 select_top_n <- function(data,
-                        sort_column = "t_value",
-                        top_n = 10,
-                        sort_order = "desc",
-                        distinct = TRUE,
-                        allow_duplicates = FALSE) {
+                         sort_column = "t_value",
+                         top_n = 10,
+                         sort_order = "desc",
+                         distinct = TRUE,
+                         allow_duplicates = FALSE) {
   # Arguments:
   # data: Data frame to operate on
   # sort_column: Column name to sort/filter on
@@ -435,11 +550,155 @@ select_top_n <- function(data,
   # Select top_n values
   # If duplicates are not allowed, ensure we keep n distinct values
   if (!allow_duplicates) {
-    top_values <- arranged_data %>% distinct(.data[[sort_column]], .keep_all = TRUE) %>% head(n = top_n)
-  } else{
-    top_values <- arranged_data %>% head(n = top_n) %>% pull(.data[[sort_column]])
-    }
+    top_values <- arranged_data %>%
+      distinct(.data[[sort_column]], .keep_all = TRUE) %>%
+      head(n = top_n)
+  } else {
+    top_values <- arranged_data %>%
+      head(n = top_n) %>%
+      pull(.data[[sort_column]])
+  }
   filtered_data <- arranged_data %>% filter(.data[[sort_column]] %in% top_values[[sort_column]])
 
   return(filtered_data)
 }
+
+
+
+
+
+
+filter_nonzeros <- function(gct,
+                            min_non_zeros = 1,
+                            nonzero_subgroup = NULL) {
+  #------------------------------------------------
+  # 1) Melt the GCT into long / tidy form
+  #------------------------------------------------
+  melted_df <- gct %>%
+    melt_gct()
+
+  #------------------------------------------------
+  # 2) Validate subgroup if provided
+  #------------------------------------------------
+  if (!is.null(nonzero_subgroup)) {
+    if (!nonzero_subgroup %in% colnames(melted_df)) {
+      stop(
+        sprintf(
+          "Column '%s' specified in 'nonzero_subgroup' does not exist in the melted GCT data.",
+          nonzero_subgroup
+        )
+      )
+    }
+  }
+
+  #------------------------------------------------
+  # 3) Figure out how we’ll group the data
+  #------------------------------------------------
+  # Always group by 'id.x'; optionally group by the subgroup
+  group_vars <- "id.x"
+  if (!is.null(nonzero_subgroup)) {
+    group_vars <- c(group_vars, nonzero_subgroup)
+  }
+
+  #------------------------------------------------
+  # 4) Count non-NA and non-zero values within each group
+  #------------------------------------------------
+  count_df <- melted_df %>%
+    filter(!is.na(value), value != 0) %>%
+    group_by(across(all_of(group_vars))) %>%
+    summarise(n_nonzeros = n(), .groups = "drop")
+
+  #------------------------------------------------
+  # 5) Keep only those groups that meet the min_non_zeros cutoff
+  #------------------------------------------------
+  # browser()
+  valid_groups <- count_df %>%
+    filter(n_nonzeros >= min_non_zeros) %>%
+    # keep only the grouping columns, so we can join back
+    select(all_of(group_vars)) %>%
+    distinct()
+  to_keep <- unique(valid_groups$id.x)
+
+  new_gct <- gct %>% subset_gct(rid = to_keep)
+
+  return(new_gct)
+}
+
+
+
+
+do_combat <- function(gct, by = "plex") {
+  message("running combat batch correction")
+  message(paste("by :", by))
+  # Check if 'by' exists in gct@cdesc
+  if (!by %in% colnames(gct@cdesc)) {
+    stop(paste("Column", by, "not found in gct@cdesc."))
+  }
+
+  # Extract metadata and matrix
+  meta <- gct@cdesc
+  mat <- gct@mat
+
+  # Check for NA values in the batch column or matrix
+  if (anyNA(meta[[by]])) {
+    stop(paste("Missing values in batch column:", by))
+  }
+  if (anyNA(mat)) {
+    message("Missing values detected in gct@mat. Rows with missing values will be imputed")
+    nas <- is.na(mat)
+    mat <- impute_with_draw(mat)
+    # mat <- mat[complete.cases(mat), ]
+  }
+
+  # Ensure alignment between gct@mat and gct@cdesc
+  if (!all(colnames(mat) %in% rownames(meta))) {
+    stop("Row names in gct@mat and gct@cdesc must match.")
+  }
+
+  # Match rows between gct@mat and gct@cdesc
+  meta <- meta[colnames(mat), , drop = FALSE]
+
+  # Run ComBat for batch effect correction
+  corrected_mat <- sva::ComBat(dat = mat, batch = meta[[by]] %>% as.character())
+
+  corrected_mat[nas] <- NA # put the NAs back
+
+
+  # we are not using this at the moment
+  # remove_rows <- apply(corrected_mat, 1, function(row) all(row == 0 | is.na(row)))
+  # # Get rownames of rows to remove
+  # rows_to_remove <- rownames(mat)[remove_rows]
+  # # Filter the matrix to keep only rows that are NOT all zero or NA
+  # filtered_mat <- corrected_mat[!remove_rows, , drop = FALSE]
+  # browser()
+
+  # Update the gct object
+  # or make a new one
+  # fairly sure this works
+  # actually this will fail if corrected mat is not the same size as original, which is possible in combat
+  # e.g. all zeros or some other edge case
+  # so the new gct should be made with the returned selection of rids
+  # browser()
+  rid <- rownames(corrected_mat)
+  # new_gct <- new("GCT",
+  #                rid = rid,
+  #                cid = cid,
+  #                rdesc =  rdesc,
+  #                cdesc = cdesc
+  #                )
+
+  gct@mat <- corrected_mat
+  message("batch correction completed")
+  return(gct)
+}
+
+
+
+# if (!is.null(params$batch)){
+#   combat_corrected <- do_combat(datal)
+#   combat_corrected %<>% as.data.frame %>% rownames_to_column(var="site_id")
+#   combat_correctedl <- combat_corrected %>% pivot_longer(-site_id, values_to = 'log2_val')
+#   datal2 <- datal %>% left_join(combat_correctedl)
+#   datal <- datal2
+#   }
+#
