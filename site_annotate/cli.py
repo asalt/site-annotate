@@ -73,7 +73,9 @@ def get_templates(TEMPLATE_PATH):
 REPORT_TEMPLATES = get_templates(TEMPLATE_PATH)
 
 
-def prepare_params(template, config, data_dir, output_dir, metadata, gct, root_dir, save_env):
+def prepare_params(
+    template, config, data_dir, output_dir, metadata, gct, root_dir, save_env
+):
     params_dict = {}
 
     # Resolve paths
@@ -98,11 +100,13 @@ def prepare_params(template, config, data_dir, output_dir, metadata, gct, root_d
     if metadata and not gct:
         metadata_path = pathlib.Path(metadata).absolute()
         validated_meta = validate_meta(metadata_path, data_dir)
-        validated_meta_path = metadata_path.parent / (metadata_path.stem + "_validated.tsv")
+        validated_meta_path = metadata_path.parent / (
+            metadata_path.stem + "_validated.tsv"
+        )
         validated_meta.to_csv(validated_meta_path, sep="\t", index=False)
         params_dict["metadata"] = str(validated_meta_path)
         logger.info(f"Wrote validated metadata: {validated_meta_path}")
-    
+
     return params_dict
 
 
@@ -296,7 +300,7 @@ def merge_meta(result_dir, metadata, data_dir):
         `site-annotate merge-meta ./path/to/meta.tsv ./siteinfo-dir`
     which will produce a gct file with metadata
 
-    Note only works with a single "plex".
+    Note only works with a single "plex". (not true anymore)
     recno information is only available from the prefix (12345) appended to the front of the emat
 
     """
@@ -471,9 +475,6 @@ def add_experiment_annotation(experiment_annotation, target):
         )
 
 
-
-
-
 @main.command()
 @common_options
 @click.option(
@@ -484,6 +485,8 @@ def add_experiment_annotation(experiment_annotation, target):
     default="analyze_modi",
     show_default=True,
 )
+@click.option("--interactive", default=False, show_default=True, is_flag=True)
+@click.option("--save-env", default=False, show_default=True)
 def report(
     template,
     config,
@@ -492,12 +495,15 @@ def report(
     metadata,
     gct,
     root_dir,
-    save_env=False,
+    interactive,
+    save_env,
     **kwargs,
 ):
 
-    params_dict = prepare_params(template, config, data_dir, output_dir, metadata, gct, root_dir, save_env)
-    tasks.run_r_code_with_params(params_dict)
+    params_dict = prepare_params(
+        template, config, data_dir, output_dir, metadata, gct, root_dir, save_env
+    )
+    tasks.run_r_code_with_params(params_dict, interactive=interactive)
     return
 
     print(template)
