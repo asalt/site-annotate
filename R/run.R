@@ -1,5 +1,49 @@
 # main entry point for all downstream analyses
 
+process_gct_file <- function(gct_file, config) {
+
+  if (!file.exists(gct_file)) {
+    message(paste0("File ", gct_file, " does not exist, exiting"))
+    stop()
+  }
+
+  gct <- cmapR::parse_gctx(gct_file)
+  util_tools <- get_tool_env("utils")
+
+  if (config$norm$normalize %||% FALSE) {
+    gct <- util_tools$normalize_gct(gct, log_transform = config$norm$log_transform %||% TRUE)
+  }
+
+  gct <- util_tools$filter_nonzeros(
+    gct,
+    config$filter$non_zeros %||% 1.0,
+    config$filter$nonzero_subgroup %||% NULL
+  )
+
+  if (is.character(config$norm$batch) %||% FALSE) {
+    gct <- util_tools$do_combat(gct, by = config$norm$batch)
+  }
+
+  return(gct)
+}
+
+exclude_samples <- function(gct, sample_exclude) {
+  if (!is.null(sample_exclude)) {
+    to_exclude <- intersect(rownames(gct@cdesc), sample_exclude)
+    message(paste0("Excluding ", length(to_exclude), " samples"))
+    to_keep <- setdiff(rownames(gct@cdesc), to_exclude)
+    gct <- gct %>% subset_gct(cid = to_keep)
+  }
+  return(gct)
+}
+
+load_and_validate_config <- function(config_file, data_dir) {
+  io_tools <- get_tool_env("io")
+  config <- io_tools$load_config(config_file, root_dir = data_dir)
+  if (is.null(config)) stop("Config file could not be loaded.")
+  return(config)
+}
+
 run <- function(
     data_dir = NULL,
     output_dir = NULL,
@@ -9,20 +53,28 @@ run <- function(
     save_env = FALSE,
     here_dir = NULL,
     ...) {
-  knitr::opts_chunk$set(echo = TRUE)
-  suppressPackageStartupMessages(library(rlang))
-  suppressPackageStartupMessages(library(tidyverse))
-  suppressPackageStartupMessages(library(magrittr))
-  suppressPackageStartupMessages(library(purrr))
-  suppressPackageStartupMessages(library(ComplexHeatmap))
-  suppressPackageStartupMessages(library(circlize))
-  suppressPackageStartupMessages(library(reactable))
-  suppressPackageStartupMessages(library(RColorBrewer))
-  suppressPackageStartupMessages(library(here))
-  print(paste0("here is defined as: ", here()))
 
+  # knitr::opts_chunk$set(echo = TRUE)
+  # suppressPackageStartupMessages(library(rlang))
+  # suppressPackageStartupMessages(library(tidyverse))
+  # suppressPackageStartupMessages(library(magrittr))
+  # suppressPackageStartupMessages(library(purrr))
+  # suppressPackageStartupMessages(library(ComplexHeatmap))
+  # suppressPackageStartupMessages(library(circlize))
+  # suppressPackageStartupMessages(library(reactable))
+  # suppressPackageStartupMessages(library(RColorBrewer))
+  # suppressPackageStartupMessages(library(here))
+  # print(paste0("here is defined as: ", here()))
+
+  source(file.path("setup_environment.R"))
   source(file.path("lazyloader.R"))
+  library(tictoc)
 
+  tic("setting up env")
+  setup_environment()  # populates the global environment with the tools and libraries
+  toc(log=FALSE)
+
+  return()
 
   if (exists("get_tool_env", where = .GlobalEnv, mode = "function")){
     get_tool_env <- .GlobalEnv$get_tool_env
@@ -34,46 +86,55 @@ run <- function(
   limma_tools <- get_tool_env("limma")
 
   OUTDIR <- output_dir %||% data_dir %||% "."
+
+  #
   config_file <- config %||% file.path(here(), "config", "base.toml")
-  config <- io_tools$load_config(config_file, root_dir = data_dir)
+  config <- load_and_validate_config(config_file, data_dir)
+  # config <- io_tools$load_config(config_file, root_dir = data_dir)
+
 
   print(config)
 
-  # gct_file <- file.path(data_dir %||% '.', config$gct_file) %||% gct_file %||% NULL
+
   gct_file <- config$gct_file %||% gct_file %||% NULL
+  gct <- process_gct_file(gct_file, config)
+  gct <- exclude_samples(gct, config$extra$sample_exclude)
+  browser()
 
-  if (!is.null(gct_file)) {
-    gct <- cmapR::parse_gctx(gct_file)
-  } else {
-    cat("no data passed, exiting")
-    stop()
-  }
+  # gct_file <- file.path(data_dir %||% '.', config$gct_file) %||% gct_file %||% NULL
+
+  # if (!is.null(gct_file)) {
+  #   gct <- cmapR::parse_gctx(gct_file)
+  # } else {
+  #   cat("no data passed, exiting")
+  #   stop()
+  # }
 
 
-  if (config$norm$normalize %||% FALSE){
-      print("normalizing..")
-      gct <- util_tools$normalize_gct(gct, log_transform=config$norm$log_transform %||% TRUE)
-  }
+  # if (config$norm$normalize %||% FALSE){
+  #     print("normalizing..")
+  #     gct <- util_tools$normalize_gct(gct, log_transform=config$norm$log_transform %||% TRUE)
+  # }
 
-  #if (config$$non_zeros %||% "median" == "median"){
-  print("filtering...")
-  gct <- util_tools$filter_nonzeros(gct,
-                                    config$filter$non_zeros %||% 1.0,
-                                    config$filter$nonzero_subgroup %||% NULL
-                                    )
+  # #if (config$$non_zeros %||% "median" == "median"){
+  # print("filtering...")
+  # gct <- util_tools$filter_nonzeros(gct,
+  #                                   config$filter$non_zeros %||% 1.0,
+  #                                   config$filter$nonzero_subgroup %||% NULL
+  #                                   )
 
-  if (is.character(config$norm$batch) %||% FALSE){
-      gct <- util_tools$do_combat(gct, by=config$norm$batch)
-  }
-  
+  # if (is.character(config$norm$batch) %||% FALSE){
+  #     gct <- util_tools$do_combat(gct, by=config$norm$batch)
+  # }
 
-  if (!is.null(config$extra$sample_exclude)) {
-    to_exclude <- config$extra$sample_exclude %||% NULL
-    to_exclude <- intersect(rownames(gct@cdesc), to_exclude)
-    message(paste0("excluding ", length(to_exclude), " samples"))
-    to_keep <- setdiff(rownames(gct@cdesc), to_exclude)
-    gct <- gct %>% subset_gct(cid = to_keep)
-  }
+
+  # if (!is.null(config$extra$sample_exclude)) {
+  #   to_exclude <- config$extra$sample_exclude %||% NULL
+  #   to_exclude <- intersect(rownames(gct@cdesc), to_exclude)
+  #   message(paste0("excluding ", length(to_exclude), " samples"))
+  #   to_keep <- setdiff(rownames(gct@cdesc), to_exclude)
+  #   gct <- gct %>% subset_gct(cid = to_keep)
+  # }
 
   suboutdir <- basename(gct_file) %>%
     basename() %>%
@@ -99,14 +160,14 @@ run <- function(
 
 
     config$heatmap$selection$file_list %>%
-      flatten %>%
+      purrr::list_flatten() %>%
       imap(~{
         the_file <- .x
         file_name <- .y
 
         file_data <- io_tools$read_genelist_file(the_file)
 
-        subgct_z <- gct_z %>% subset_gct(rid = file_data$id %||% file_data[[1]]) # fallback 
+        subgct_z <- gct_z %>% subset_gct(rid = file_data$id %||% file_data[[1]]) # fallback
         print(paste('nrow submat gct: ', nrow(subgct_z@mat)))
         if (nrow(subgct_z@mat) == 0) {
           message(paste0("No rows found in ", the_file, ", skipping"))
@@ -117,7 +178,7 @@ run <- function(
           print(length(file_data$id))
           print(head(file_data))
           print(file_data$id)
-          # browser() 
+          # browser()
           return()
         }
         .nrow <- nrow(subgct_z@mat)
