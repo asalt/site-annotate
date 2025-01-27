@@ -31,7 +31,7 @@ impute_with_draw <- function(values, seed = 123, mean_adjust = -1.8, sd_adjust =
   n <- sum(is.na(values))
 
   # Generate 8 random draws and average them
-  random_draw_final <- rowMeans(
+  random_draw_final <- colMeans(
     matrix(rnorm(n * 8, mean = adjusted_mean, sd = adjusted_sd), nrow = 8)
   )
 
@@ -46,6 +46,7 @@ impute_with_draw <- function(values, seed = 123, mean_adjust = -1.8, sd_adjust =
 
 
 normalize <- function(datal, id_col = "site_id") {
+  # not used
   # Ensure that 'id_col' exists in 'datal'
   if (!id_col %in% names(datal)) {
     stop(paste("Column", id_col, "not found in 'datal'"))
@@ -188,7 +189,7 @@ normalize_gct <- function(gct, log_transform = FALSE) {
   rownames(res) <- res$id.x
   res$id.x <- NULL
   res <- as.matrix(res)
-  .minval <- res[res > -Inf] %>% min(na.rm = T)
+  # .minval <- res[res > -Inf] %>% min(na.rm = T)
   res[res == -Inf] <- NA
   # res <- res + abs(.minval*1.1)
   rdesc <- gct@rdesc
