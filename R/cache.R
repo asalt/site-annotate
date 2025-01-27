@@ -1,5 +1,36 @@
 suppressPackageStartupMessages(library(RSQLite))
 
+
+`%cached_by%` <- function(compute_func, hashval) {
+
+  compute_expr <- substitute(compute_func)
+
+  # Check the cache
+  cached_obj <- load_object_from_cache(hashval)
+
+  if (!is.null(cached_obj)) {
+    message("Cache hit for hash: ", hashval)
+    return(cached_obj)
+  }
+
+  # Perform computation
+  message("Cache miss for hash: ", hashval)
+
+  # Optional: Inspect or log the expression
+  # can add some verbosity check here
+
+  message("evaluating: ", deparse(compute_expr))
+
+  result <- eval(compute_func)
+
+  # Save to cache
+  save_object_to_cache(result, hashval, notes = as.character(deparse(compute_expr)))
+
+  return(result)
+}
+
+
+
 # # Initialize SQLite connection
 # initialize_cache_db <- function(db_path = "cache.sqlite") {
 #   if (!fs::file_exists(db_path)) {
@@ -48,12 +79,98 @@ initialize_cache_db <- function(db_path = "cache.sqlite", close = TRUE){
     )
   ")
 
+  # Create tables if they don't exist
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS object_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      serialized_obj BLOB,
+      object_hash TEXT NOT NULL UNIQUE,
+      notes TEXT,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  ")
+
   if (close) {
     DBI::dbDisconnect(con)
     message("Connection closed.")
     return(NULL)
   }
   return(con)
+}
+
+
+load_object_from_cache <- function(object_hash, db_path = "cache.sqlite", con = NULL, close = is.null(con)) {
+
+  if (is.null(con)) {
+    con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
+  }
+
+  # Query the object cache
+  result <- DBI::dbGetQuery(con, "
+    SELECT serialized_obj FROM object_cache
+    WHERE object_hash = ?
+    LIMIT 1",
+    params = list(object_hash)
+  )
+
+  if (close) {
+    DBI::dbDisconnect(con)
+    message("Connection closed.")
+  }
+
+  if (nrow(result) > 0) {
+    # Deserialize and load the object
+    serialized_obj <- result$serialized_obj[[1]]
+    loaded_obj <- unserialize(serialized_obj)
+    message("Object successfully loaded from cache.")
+    return(loaded_obj)
+  } else {
+    message("No cached object found.")
+    return(NULL)
+  }
+}
+
+
+save_object_to_cache <- function(object, object_hash = NULL, notes = NULL, db_path = "cache.sqlite", con = NULL, close = is.null(con)) {
+
+  if (is.null(con)) {
+    con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
+  }
+
+  if (is.null(notes)) {
+    notes <- ""
+  }
+
+  if (length(notes) > 1) {
+    notes <- paste(notes, collapse = "\n")
+  }
+
+
+  # Serialize the object
+  serialized_obj <- serialize(object, NULL)
+  serialized_obj_blob <- I(list(serialized_obj))
+
+  # Get the object hash if not already provided
+  if (is.null(object_hash)) {
+    object_hash <- digest::digest(serialized_obj)
+  }
+
+  # Insert or update the object cache
+  browser()
+  DBI::dbExecute(
+    con,
+    "INSERT INTO object_cache (serialized_obj, object_hash, notes, timestamp)
+     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(object_hash) DO UPDATE SET
+       serialized_obj = excluded.serialized_obj,
+       timestamp = CURRENT_TIMESTAMP",
+    params = list(serialized_obj_blob, object_hash, notes)
+  )
+
+  if (close) {
+    DBI::dbDisconnect(con)
+    message("Connection closed.")
+  }
 }
 
 save_package_to_db <- function(package, db_path = "cache.sqlite", con = NULL, close = is.null(con)) {
