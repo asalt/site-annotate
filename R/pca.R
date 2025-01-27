@@ -2,7 +2,7 @@ library(here)
 
 source(file.path(here(), "R", "lazyloader.R"))
 
-# this only works for sitename level 
+# this only works for sitename level
 do_pca <- function(gct,  scale = T, removeVar=0.1) {
 
   library(PCAtools)
@@ -36,6 +36,8 @@ plot_biplot <- function(
     ntopLoadings = 5,
     title = "",
     basename = "pca_biplot_",
+    fig_width = 6.2,
+    fig_height = 5.8,
     ...) {
 
   if (!is.logical(encircle) || length(encircle) != 1 || is.na(encircle)) {
@@ -107,6 +109,7 @@ plot_biplot <- function(
           shape = shape,
           # shape="source",
           legendPosition = "right",
+          legendLabSize = 9,
           encircle = encircle,
           title = title,
           max.overlaps = Inf,
@@ -121,14 +124,14 @@ plot_biplot <- function(
           geom_vline(xintercept = 0, color = "grey50", show.legend = NA) +
           colorspace::scale_color_discrete_qualitative(palette = "Dynamic") +
           colorspace::scale_fill_discrete_qualitative(palette = "Dynamic") +
-          scale_shape_manual(values = c(16, 17, 15, 7, 9, 12, 13, 14)) +
+          scale_shape_manual(values = c(16, 17, 15, 7, 9, 12, 13, 14)) +  # this fails if more than 8
           theme(
             panel.grid.major = element_blank(),
             panel.grid.minor = element_blank()
           )
 
         filename <- paste0(basename, "_", .x1, "_", .x2, ".pdf")
-        ggplot2::ggsave(filename, plt, width = 6.2, height = 5.8)
+        ggplot2::ggsave(filename, plt, width = fig_width, height = fig_height)
         return(plt)
       } # exit inner
     ) # exit outer
