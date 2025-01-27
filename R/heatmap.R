@@ -18,6 +18,65 @@ hide_zero <- function(x) {
 }
 
 
+draw_and_save_heatmap <- function(ht_draw_code, outf, gct_z_subset, width=NULL, height=NULL) {
+  # Calculate dimensions
+  if (is.null(width)){
+    width <- 6.4 + (ncol(gct_z_subset@mat) * 0.26)
+  }
+  if (is.null(height)){
+    height <- 7.8
+  }
+
+  message(paste0("Drawing heatmap: ", outf))
+  tryCatch(
+    {
+      cairo_pdf(outf, width = width, height = height)
+      ht_draw_code()
+      dev.off()
+    },
+    error = function(e) {
+      message("There was a problem drawing the heatmap: ", e$message)
+    }
+  )
+}
+
+prepare_heatmap_output_path <- function(
+  outdir,
+  subdirs = NULL,
+  prefix = "",
+  suffix = "",
+  dimensions = NULL,
+  cut_by = NULL,
+  cluster_rows = NULL,
+  cluster_columns = NULL,
+  file_ext = "pdf"
+) {
+  # Create subdirectories if specified
+  if (!is.null(subdirs)) {
+    outdir <- file.path(outdir, subdirs)
+    if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
+  }
+
+  # Build the filename
+  filename <- make.names(
+    paste0(
+      prefix,
+      if (!is.null(dimensions)) paste0("_", dimensions$nrow, "x", dimensions$ncol),
+      if (!is.null(cut_by)) paste0("_cut_", cut_by),
+      if (!is.null(cluster_rows)) paste0("_cr_", cluster_rows),
+      if (!is.null(cluster_columns)) paste0("_cc_", cluster_columns),
+      suffix,
+      ".", file_ext
+    )
+  )
+
+  # Full output path
+  outf <- file.path(outdir, filename)
+  return(outf)
+}
+
+
+
 # Function: sort_by_number_after_underscore ( is this being used? )
 # Description: Sorts a vector of strings based on the numeric part that follows the first underscore.
 # Parameters:
@@ -520,6 +579,7 @@ make_heatmap_fromgct <- function(
     })
     # mat_data <- util_tools$condense_groups(mat_data)
   }
+  # browser()
 
   row_labels <- mat_data$sitename
   heatmap_legend_param <- list(title = "zscore")
@@ -667,7 +727,8 @@ make_heatmap_fromgct <- function(
     cluster_column_slices = FALSE,
     column_names_side = "top",
     clustering_distance_rows = dist_no_na,
-    clustering_distance_columns = dist_no_na
+    clustering_distance_columns = dist_no_na,
+    use_raster = ifelse(nrow(mat_data) > 1999, TRUE, FALSE)
   )
 
 
