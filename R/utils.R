@@ -59,9 +59,11 @@ normalize <- function(datal, id_col = "site_id") {
     min()
 
   # Normalize 'value' and compute 'log2_val' and 'zscore'
+  # browser()
   datal <- datal %>%
     dplyr::filter(value > 0) %>%
     dplyr::group_by(name, recno, runno, searchno, label, taxon) %>%
+    # dplyr::group_by(name, recno, runno, searchno, label) %>% #, taxon) %>%
     dplyr::mutate(
       val_mednorm = (value + (minval / 2)) / median(value, na.rm = TRUE)
     ) %>%
@@ -628,7 +630,7 @@ filter_nonzeros <- function(gct,
 
 
 
-do_combat <- function(gct, by = "plex") {
+do_combat <- function(gct, by = "plex", cov=NULL) {
   message("running combat batch correction")
   message(paste("by :", by))
   # Check if 'by' exists in gct@cdesc
@@ -638,16 +640,23 @@ do_combat <- function(gct, by = "plex") {
 
   # Extract metadata and matrix
   meta <- gct@cdesc
+  meta[[by]] <- as.character(meta[[by]])
   mat <- gct@mat
+  nas <- is.na(mat)
 
   # Check for NA values in the batch column or matrix
   if (anyNA(meta[[by]])) {
     stop(paste("Missing values in batch column:", by))
   }
+
   if (anyNA(mat)) {
     message("Missing values detected in gct@mat. Rows with missing values will be imputed")
-    nas <- is.na(mat)
-    mat <- impute_with_draw(mat)
+
+    # mat <- impute_with_draw(mat)
+    for (i in meta[[by]] %>% unique()) {
+      .columns <- meta[ meta[[by]] == i, ] %>% rownames()
+        mat[, .columns] <- impute_with_draw(mat[, .columns], mean_adjust = 0, sd_adjust = 0.1)
+    }
     # mat <- mat[complete.cases(mat), ]
   }
 
@@ -703,3 +712,76 @@ do_combat <- function(gct, by = "plex") {
 #   datal <- datal2
 #   }
 #
+
+
+do_limmaremovebatch <- function(gct, by = "plex", cov=NULL) {
+  message("running combat batch correction")
+  message(paste("by :", by))
+  # Check if 'by' exists in gct@cdesc
+  if (!by %in% colnames(gct@cdesc)) {
+    stop(paste("Column", by, "not found in gct@cdesc."))
+  }
+
+  # Extract metadata and matrix
+  meta <- gct@cdesc
+  meta[[by]] <- as.character(meta[[by]])
+  mat <- gct@mat
+  nas <- is.na(mat)
+
+  # Check for NA values in the batch column or matrix
+  if (anyNA(meta[[by]])) {
+    stop(paste("Missing values in batch column:", by))
+  }
+
+  if (anyNA(mat)) {
+    message("Missing values detected in gct@mat. Rows with missing values will be imputed")
+
+    # mat <- impute_with_draw(mat)
+    for (i in meta[[by]] %>% unique()) {
+      .columns <- meta[ meta[[by]] == i, ] %>% rownames()
+        mat[, .columns] <- impute_with_draw(mat[, .columns])
+    }
+    # mat <- mat[complete.cases(mat), ]
+  }
+
+  # Ensure alignment between gct@mat and gct@cdesc
+  if (!all(colnames(mat) %in% rownames(meta))) {
+    stop("Row names in gct@mat and gct@cdesc must match.")
+  }
+
+  # Match rows between gct@mat and gct@cdesc
+  meta <- meta[colnames(mat), , drop = FALSE]
+
+  # Run ComBat for batch effect correction
+  corrected_mat <- limma::removeBatchEffect(mat, batch = meta[[by]] %>% as.character())
+
+  corrected_mat[nas] <- NA # put the NAs back
+
+
+  # we are not using this at the moment
+  # remove_rows <- apply(corrected_mat, 1, function(row) all(row == 0 | is.na(row)))
+  # # Get rownames of rows to remove
+  # rows_to_remove <- rownames(mat)[remove_rows]
+  # # Filter the matrix to keep only rows that are NOT all zero or NA
+  # filtered_mat <- corrected_mat[!remove_rows, , drop = FALSE]
+  # browser()
+
+  # Update the gct object
+  # or make a new one
+  # fairly sure this works
+  # actually this will fail if corrected mat is not the same size as original, which is possible in combat
+  # e.g. all zeros or some other edge case
+  # so the new gct should be made with the returned selection of rids
+  # browser()
+  rid <- rownames(corrected_mat)
+  # new_gct <- new("GCT",
+  #                rid = rid,
+  #                cid = cid,
+  #                rdesc =  rdesc,
+  #                cdesc = cdesc
+  #                )
+
+  gct@mat <- corrected_mat
+  message("batch correction completed")
+  return(gct)
+}
