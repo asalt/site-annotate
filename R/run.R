@@ -24,21 +24,23 @@ process_gct_file <- function(gct_file, config) {
 
   # Step 2: Normalize GCT
   norm_config <- config$norm
-  gct <- util_tools$normalize_gct(gct, log_transform = norm_config$log_transform %||% TRUE) %cached_by%
-    rlang::hash(c(gct, norm_config))
+  normed_gct <- util_tools$normalize_gct(gct, log_transform = norm_config$log_transform %||% TRUE) %cached_by%
+    rlang::hash(c(gct@mat, norm_config))
 
   # Step 3: Filter Non-Zeros
-  gct <- util_tools$filter_nonzeros(gct, config$filter$non_zeros %||% 1.0,
+  filtered_gct <- util_tools$filter_nonzeros(normed_gct, config$filter$non_zeros %||% 1.0,
     config$filter$nonzero_subgroup %||% NULL
-  ) %cached_by% rlang::hash(c(gct, config$filter))
+  ) %cached_by% rlang::hash(c(normed_gct@mat, config$filter$non_zeros %||% 1.0, config$filter$nonzero_subgroup %||% NULL))
 
   # Step 4: Apply Batch Correction (if required)
   # need more error checking ehre or inside
+  final_gct <- filtered_gct
   if (is.character(config$norm$batch) %||% FALSE) {
-    gct <- util_tools$do_combat(gct, by = config$norm$batch) %cached_by% rlang::hash(c(gct, config$norm$batch))
+    final_gct <- util_tools$do_combat(filtered_gct, by = config$norm$batch) %cached_by% rlang::hash(c(filtered_gct@mat, config$norm$batch))
+    # final_gct <- util_tools$do_limmaremovebatch(filtered_gct, by = config$norm$batch) %cached_by% rlang::hash(c(filtered_gct@mat, config$norm$batch))
   }
 
-  return(gct)
+  return(final_gct)
 }
 
 
@@ -269,9 +271,11 @@ run <- function(
   gct_file <- config$gct_file %||% gct_file %||% NULL
   gct <- process_gct_file(gct_file, config)
   gct <- exclude_samples(gct, config$extra$sample_exclude)
-  browser()
+  # browser()
 
 
+  # ==========================================
+  # NAMES SETUP
   suboutdir <- basename(gct_file) %>%
     basename() %>%
     tools::file_path_sans_ext()
@@ -281,9 +285,10 @@ run <- function(
   OUTNAME <- "" # don't set an actual name for the internal files saved within the main dir
 
   FRIENDLY_NAME <- suboutdir %>% str_replace_all("_", " ") %>% str_replace(., "\\d+$", "") %>% str_wrap(width = 60)
+  # ==========================================
 
   util_tools <- get_tool_env("utils")
-  gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by) %cached_by% rlang::hash(c(gct, config$heatmap$zscore_by))
+  gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$z_score_by)# %cached_by% rlang::hash(c(gct@mat, config$heatmap$z_score_by))
 
 
 
