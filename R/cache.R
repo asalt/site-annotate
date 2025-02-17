@@ -2,30 +2,30 @@ suppressPackageStartupMessages(library(RSQLite))
 
 
 `%cached_by%` <- function(compute_func, hashval) {
+  # Capture the unevaluated expression to avoid premature execution
+  compute_expr <- substitute(compute_func)
 
-  compute_expr <- substitute(compute_func) # "Capture" the expression
-
-  # Check the cache
+  # Check if the result is already cached
   cached_obj <- load_object_from_cache(hashval)
   if (!is.null(cached_obj)) {
     message("Cache hit for hash: ", hashval)
     return(cached_obj)
   }
 
-  # Perform computation
+  # Cache miss: Only evaluate the function now
   message("Cache miss for hash: ", hashval)
-  # Optional: Inspect or log the expression
-  # can add some verbosity check here
-  message("evaluating: ", deparse(compute_expr))
-  result <- eval(compute_func)
+  message("Evaluating: ", deparse(compute_expr))
 
-  # Save to cache
-  save_object_to_cache(result, hashval, notes = as.character(deparse(compute_expr)))
+  # Use eval() to evaluate in the correct environment
+  # parent.frame() ensures execution happens in the caller's environment
+  # This prevents issues in dplyr pipelines or nested function calls
+  result <- eval(compute_expr, envir = parent.frame())
+  
+  # Save the computed result to cache
+  save_object_to_cache(result, hashval)
 
   return(result)
 }
-
-
 
 # # Initialize SQLite connection
 # initialize_cache_db <- function(db_path = "cache.sqlite") {
