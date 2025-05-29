@@ -9,7 +9,8 @@ suppressPackageStartupMessages(library(RSQLite))
   cached_obj <- load_object_from_cache(hashval)
 
   if (!is.null(cached_obj)) {
-    message("Cache hit for hash: ", hashval)
+    message(as.character(deparse(compute_expr)))
+    message("Cache hit for: ", hashval)
     return(cached_obj)
   }
 
@@ -30,40 +31,6 @@ suppressPackageStartupMessages(library(RSQLite))
 }
 
 
-
-# # Initialize SQLite connection
-# initialize_cache_db <- function(db_path = "cache.sqlite") {
-#   if (!fs::file_exists(db_path)) {
-#     db <- DBI::dbConnect(RSQLite::SQLite(), db_path)
-#     DBI::dbExecute(db, "CREATE TABLE cache (hashval TEXT PRIMARY KEY, object BLOB)")
-#     DBI::dbDisconnect(db)
-#   }
-#   return(db_path)
-# }
-
-# initialize_cache_db <- function(db_path = "cache.sqlite") {
-#   # Connect to the database
-#   con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
-
-#   # Create tables if they don't exist
-#   DBI::dbExecute(con, "
-#     CREATE TABLE IF NOT EXISTS package_versions (
-#       package TEXT PRIMARY KEY,
-#       version TEXT
-#     )
-#   ")
-
-#   DBI::dbExecute(con, "
-#     CREATE TABLE IF NOT EXISTS environment_cache (
-#       id INTEGER PRIMARY KEY AUTOINCREMENT,
-#       timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-#       serialized_env BLOB,
-#       version_hash TEXT
-#     )
-#   ")
-
-#   DBI::dbDisconnect(con)
-# }
 
 initialize_cache_db <- function(db_path = "cache.sqlite", close = TRUE){
 
@@ -156,7 +123,6 @@ save_object_to_cache <- function(object, object_hash = NULL, notes = NULL, db_pa
   }
 
   # Insert or update the object cache
-  browser()
   DBI::dbExecute(
     con,
     "INSERT INTO object_cache (serialized_obj, object_hash, notes, timestamp)
