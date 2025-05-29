@@ -2,7 +2,7 @@
 import pandas as pd
 import logging
 from typing import Iterable, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
 import pyfaidx
 from tqdm import tqdm
@@ -99,7 +99,7 @@ def run_pipeline(
             fullres.append(res)
 
     if cores > 1: # this is much slower too much tme copying data to workers, need to batch it better
-        with ThreadPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=cores) as executor:
             futures = {
                 executor.submit(process_frame, item, fa, fa_psp_ref): item for item in g
             }
