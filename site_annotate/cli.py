@@ -238,7 +238,7 @@ def conf_to_dataframe(conf_file, set_index=False):
 
 def validate_meta(
     metadata_file: pathlib.Path, data_dir: pathlib.Path, ensure_data=True
-):
+) -> dict:
     """
     top level function to read metadata file and validate it
     """
@@ -249,14 +249,14 @@ def validate_meta(
 
     rec_run_searches = meta_df.rec_run_search.unique()
     expr_data = io.find_expr_files(rec_run_searches, data_dir)
-    expr_data = {k: v for (k, v) in expr_data.items() if v != None}
+    expr_data = {k: v for (k, v) in expr_data.items() if v}
     if len(expr_data) == 0 and not ensure_data:  # no data
         return
 
-    meta_df_final = io.validate_expr_files(expr_data, meta_df)
+    meta_df_final_collection = io.validate_expr_files(expr_data, meta_df)
     logger.info(f"successfully validated {metadata_file}")
 
-    return meta_df_final
+    return meta_df_final_collection
 
 
 @main.command()
@@ -272,8 +272,9 @@ def check_meta(metadata, data_dir):
     but critically, the `rec_runno_searchno` pattern string needs to match
     TODO: allow partial matches and let runno and searchno take on default values if not provided
     """
-    meta_validated = validate_meta(metadata, data_dir)
-    print(meta_validated.to_string())
+    meta_validated_collection = validate_meta(metadata, data_dir)
+    for meta_validated in meta_validated_collection:
+        print(meta_validated.to_string())
     print("Success")
 
 
@@ -316,15 +317,17 @@ def merge_meta(result_dir, metadata, data_dir):
 
     metadata = pathlib.Path(metadata).absolute()
     # can add try/except here to provide better error msg
-    meta_validated = validate_meta(metadata, data_dir)
+    meta_validated_collection = validate_meta(metadata, data_dir)
 
-    meta_validated_fname = metadata.parent / (metadata.stem + "_validated.tsv")
-    meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
+    for name, meta_validated in meta_validated_collection.items():
+        meta_validated_fname = metadata.parent / (metadata.stem + f"_{name}_validated.tsv")
+        logger.info(f"writing {meta_validated_fname}")
+        meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
 
-    outname = result_dir / (metadata.stem + "_siteinfo_combined")
-    # ===
-    logger.info(f"writing {meta_validated_fname}")
-    res = io.merge_metadata(meta_validated, outname)  # writes gct file to output
+        outname = result_dir / (metadata.stem + f"_{name}_siteinfo_combined")
+        # ===
+        logger.info(f"preparing {outname}")
+        res = io.merge_metadata(meta_validated, outname)  # writes gct file to output
 
 
 def match_columns(sample_names: list, df: pd.DataFrame, threshold=97):

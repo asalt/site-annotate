@@ -60,8 +60,8 @@ RENAME_SHORT = {
 }
 RENAME.update({x.replace("_", "-"): y for x, y in RENAME.items()})
 RENAME.update({x+"_intensity": y for x, y in RENAME.items()})
-RENAME_SHORT.update({x.replace("_", "-"): y for x, y in RENAME_SHORT.items()})
 RENAME_SHORT.update({x+"_intensity": y for x, y in RENAME.items()})
+RENAME_SHORT.update({x.replace("_", "-"): y for x, y in RENAME_SHORT.items()})
 
 
 def set_data_dir():
@@ -145,7 +145,8 @@ def get_reader(file: str, **kwargs):
         return wrapped_reader(conf_to_dataframe)
     else:
         logger.error(f"do not know how to read file")
-        return None
+        raise ValueError("do not know how to read file")
+        # return None
 
 
 def convert_tmt_label(shorthand):
@@ -185,11 +186,11 @@ def convert_tmt_label(shorthand):
     return f"TMT_{normalized_input}_N"
 
 
-def find_expr_file(rec_run_search: str, data_dir):
+def find_expr_file(rec_run_search: str, data_dir): # TODO fix this
     """
     data_dir should be absolute path by this point
     """
-    search_pattern = os.path.join(data_dir, f"{rec_run_search}*reduced*tsv")
+    search_pattern = os.path.join(data_dir, "**", f"{rec_run_search}*reduced*mapped*tsv")
     results = glob.glob(search_pattern)
 
     if not results:  # try one more time
@@ -198,17 +199,20 @@ def find_expr_file(rec_run_search: str, data_dir):
         results = glob.glob(search_pattern)
 
     if len(results) == 0:
-        logger.warning(f"no files found for {rec_run_search} in {data_dir}")
-        raise FileNotFoundError(f"no files found for {rec_run_search} in {data_dir}")
-    if len(results) > 1:
-        logger.warning(
-            f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
-        )
-        raise FileNotFoundError(
-            f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
-        )
-    if len(results) == 1:
-        return results[0]
+        logger.warning(f"no files found for {rec_run_search} in {data_dir}, skipping")
+        #raise FileNotFoundError(f"no files found for {rec_run_search} in {data_dir}")
+    # if len(results) > 1:
+    #     #if any('mapped'  in x for x in results):
+    #     #    results = [x for x in results if 'mapped' in x]
+    #     results = 
+    #     logger.warning(
+    #         f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
+    #     )
+    #     raise FileNotFoundError(
+    #         f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
+    #     )
+    # if len(results) == 1:
+    return results
 
 
 def find_expr_files(rec_run_searches, data_dir):
@@ -258,22 +262,28 @@ def get_isoform_hierarchy() -> pd.DataFrame:
 
 
 
-def get_rename_dict(sample_cols):
-
+def get_rename_dict(sample_cols, protected=None): 
+    """
+    chooses RENAME or RENAME_SHORT
+    """
     if len(sample_cols) < 10:  # then tmt 6plex (or similar) no C isotopes
-        return update_rename(sample_cols, RENAME_SHORT)
-    return update_rename(sample_cols, RENAME)
+        return update_rename(sample_cols, RENAME_SHORT, protected)
+    return update_rename(sample_cols, RENAME, protected)
 
-def update_rename(cols, rename_mapping: dict=None) -> dict:
+def update_rename(cols, rename_mapping: dict=None, protected=None) -> dict:
     if rename_mapping is None:
         rename_mapping=RENAME
     new_vals = dict()
     for key in rename_mapping:
+        if protected is not None and key in protected:
+            continue
+
         matches = [x for x in cols if key in x]
         if len(matches) == 0:
             continue
         if len(matches) > 1:
-            logger.error(f"too many columns match a single key {matches} - {key}")
+            logger.warning(f"too many columns match a single key {matches} - {key}")
+            continue
         matchval = matches[0]
         new_vals[matchval] = matchval + "_" + rename_mapping[key]
     rename_mapping.update(new_vals)
@@ -439,73 +449,90 @@ def validate_psm_file(df):
 
 
 def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
-    """ """
-    for rrs, expr_file in rec_run_searches.items():
+    """ 
+    type is Dict[str] -> list
+    """
+    results = dict()
+    meta_df = meta_df.copy()
+    for rrs, expr_files in rec_run_searches.items():
         rec, run, search = rrs.split("_")
 
-        _meta = meta_df[
-            (
-                (meta_df.recno == rec)
-                & (meta_df.runno == run)
-                & (meta_df.searchno == search)
-            )
-        ]
-        meta_df.loc[_meta.index, "expr_col"] = None
-        meta_df.loc[_meta.index, "expr_file"] = expr_file
-        df = get_reader(expr_file)(expr_file, nrows=5)
+        for expr_file in expr_files:
+            _meta = meta_df[
+                (
+                    (meta_df.recno == rec)
+                    & (meta_df.runno == run)
+                    & (meta_df.searchno == search)
+                )
+            ]
+            meta_df.loc[_meta.index, "expr_col"] = None
+            meta_df.loc[_meta.index, "expr_file"] = expr_file
+            df = get_reader(expr_file)(expr_file, nrows=5)
 
-        #rename_dict = RENAME
-        sample_columns = [x for x in df.columns if x.startswith("sample")]
-        rename_dict = get_rename_dict(sample_columns)
-        # if (
-        #     sample_columns and len(sample_columns) < 10
-        # ):  # then tmt 6plex (or similar) no C isotopes
-        #     rename_dict = RENAME_SHORT
-        # df = df.rename(columns=rename_dict)
+            #rename_dict = RENAME
+            # this will fail if it is no longer called "sample"
+            sample_columns = [x for x in df.columns if x.startswith("sample")]
+            rename_dict = get_rename_dict(sample_columns)
+            # if (
+            #     sample_columns and len(sample_columns) < 10
+            # ):  # then tmt 6plex (or similar) no C isotopes
+            #     rename_dict = RENAME_SHORT
+            # df = df.rename(columns=rename_dict)
 
-        # if "intensity_sum" not in df.columns:
-        #     raise ValueError(f"`intensity_sum` not found in {expr_file}")
-        if "intensity_sum" not in df.columns:
-            logger.warning(
-                f"`intensity_sum` not found in {expr_file}. Downstream analyis might fail"
-            )
-            # raise ValueError(f"`intensity_sum` not found in {expr_file}")
+            # if "intensity_sum" not in df.columns:
+            #     raise ValueError(f"`intensity_sum` not found in {expr_file}")
+            if "intensity_sum" not in df.columns:
+                logger.warning(
+                    f"`intensity_sum` not found in {expr_file}. Downstream analyis might fail"
+                )
+                # raise ValueError(f"`intensity_sum` not found in {expr_file}")
 
-        if "label" in _meta.columns:
-            for label in _meta["label"].tolist():
-                label_mapping = [x for x in df.columns if x.startswith(label)]
-                if len(label_mapping) == 0:
-                    logger.warning(f"could not find sample with label {label}")
-                    continue
-                if len(label_mapping) > 1:
-                    logger.warning(f"too many results for {label}")
-                    continue
-                if len(label_mapping) == 1:
-                    expr_col = label_mapping[0]
+            if "label" in _meta.columns:
+                for label in _meta["label"].tolist():
+                    label_mapping = [x for x in df.columns if label in x and 'ratio' not in x] # 
+                    # ratio is a col we arent interested in
+                    if len(label_mapping) == 0:
+                        logger.warning(f"could not find sample with label {label}")
+                        continue
+                    if len(label_mapping) > 1:
+                        logger.warning(f"too many results for {label}")
+                        continue
+                    if len(label_mapping) == 1:
+                        expr_col = label_mapping[0]
 
-                ix = meta_df[
-                    (meta_df["rec_run_search"] == rrs) & (meta_df["label"] == label)
-                ].index
-                if (len(ix)) != 1:
-                    raise ValueError()
-                    import ipdb
+                    ix = meta_df[
+                        (meta_df["rec_run_search"] == rrs) & (meta_df["label"] == label)
+                    ].index
+                    if (len(ix)) != 1:
+                        raise ValueError()
+                        import ipdb
 
-                    ipdb.set_trace()
-                    1 + 1
-                ix = ix[0]
-                meta_df.loc[ix, "expr_col"] = expr_col
-                meta_df.loc[ix, "expr_file"] = expr_file
-        else:
-            expr_col = "intensity_sum"
-            meta_df.loc[_meta.index, "expr_col"] = "intensity_sum"
-    return meta_df
+                        ipdb.set_trace()
+                        1 + 1
+                    ix = ix[0]
+                    meta_df.loc[ix, "expr_col"] = expr_col
+                    meta_df.loc[ix, "expr_file"] = expr_file
+            else:
+                expr_col = "intensity_sum"
+                meta_df.loc[_meta.index, "expr_col"] = "intensity_sum"
+
+
+            basename = os.path.split(str(expr_file))[-1]
+            key = os.path.splitext(basename)[0]
+            key = re.sub('site_.*', 'site', key)
+            key = key.lstrip(rrs)
+            results[key] = meta_df.copy()  #copy again
+    return results
 
 
 def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
+    """
+    merge and write gct
+    """
     # Load metadata file
 
     # Find unique expression file paths
-    unique_expr_files = metadata["expr_file"].unique()
+    unique_expr_files = metadata["expr_file"].dropna().unique()
 
     # Dictionary to hold processed DataFrames for each file
     processed_data = {}
@@ -541,15 +568,12 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
 
         #
 
-        sample_columns = [x for x in expr_data.columns if x.startswith("sample")]
-        rename_dict = RENAME
-        if (
-            sample_columns and len(sample_columns) < 10
-        ):  # then tmt 6plex (or similar) no C isotopes
-            rename_dict = RENAME_SHORT
-        expr_data = expr_data.rename(
-            columns=rename_dict
-        )  # a universal renamer for various possible names
+        # default philosopher samplenames are of form experiment_sample_xx
+        sample_columns = [x for x in expr_data.columns if (("sample_" in x or x.endswith("intensity")) and "ratio" not in x)]
+        #rename_dict = get_rename_dict(sample_columns, protected=metadata.expr_col.dropna().tolist())
+        #expr_data = expr_data.rename(
+        #    columns=rename_dict
+        #)  # a universal renamer for various possible names
 
         if "site_id" not in expr_data.columns:
             if "sitename2" in expr_data:
@@ -676,9 +700,9 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
     # if rdesc_cols:
     #     rdesc = combined_df[list(rdesc_cols)]
 
-    # import ipdb; ipdb.set_trace()
 
-    write_gct(combined_emat, cdesc=metadata, rdesc=combined_rdesc, filename=filepath)
+    cdesc = metadata.loc[combined_emat.columns]
+    write_gct(combined_emat, cdesc=cdesc, rdesc=combined_rdesc, filename=filepath)
 
     combined_df = combined_rdesc.join(combined_emat)
 
