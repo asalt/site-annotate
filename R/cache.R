@@ -3,11 +3,10 @@ suppressPackageStartupMessages(library(RSQLite))
 
 `%cached_by%` <- function(compute_func, hashval) {
 
-  compute_expr <- substitute(compute_func)
+  compute_expr <- substitute(compute_func) # "Capture" the expression
 
   # Check the cache
   cached_obj <- load_object_from_cache(hashval)
-
   if (!is.null(cached_obj)) {
     message(as.character(deparse(compute_expr)))
     message("Cache hit for: ", hashval)
@@ -16,12 +15,9 @@ suppressPackageStartupMessages(library(RSQLite))
 
   # Perform computation
   message("Cache miss for hash: ", hashval)
-
   # Optional: Inspect or log the expression
   # can add some verbosity check here
-
   message("evaluating: ", deparse(compute_expr))
-
   result <- eval(compute_func)
 
   # Save to cache
