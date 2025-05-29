@@ -8,6 +8,7 @@ import pyfaidx
 from tqdm import tqdm
 
 from . import io
+from . import io_external
 from . import modisite
 from .log import get_logger
 from .constants import VALID_MODI_COLS
@@ -90,18 +91,25 @@ def run_pipeline(
     # if "m_15_9949" in modis_for_processing:
     #     modis_for_processing.remove("m_15_9949")
 
-    g = df.groupby("protein")
     fullres = list()
 
     if cores == 1:
+        g = df.groupby("protein")
         for item in tqdm(g):
             res = process_frame(item, fa, fa_psp_ref)
             fullres.append(res)
 
     if cores > 1: # this is much slower too much tme copying data to workers, need to batch it better
+        batch_size = len(df) // cores
+        idxs = [x for x in range(0, len(df), batch_size)]
+        idxs[-1] = idxs[-1] + (len(df) - idxs[-1])
+        batches = [df.iloc[a:b] for a,b in zip(idxs[0:-1], idxs[1:])]
+
         with ProcessPoolExecutor(max_workers=cores) as executor:
             futures = {
-                executor.submit(process_frame, item, fa, fa_psp_ref): item for item in g
+                    executor.submit(process_batch, subdf, fa.filename, fa_psp_ref.filename if fa_psp_ref else None)
+                    for subdf in batches
+                # executor.submit(process_frame, item, fa, fa_psp_ref): item for item in g
             }
 
             for future in tqdm(
@@ -112,11 +120,31 @@ def run_pipeline(
             ):
                 try:
                     result = future.result()
-                    fullres.append(result)
+                    #fullres.append(result)
+                    fullres.extend(result)
                 except Exception as e:
 
                     # print(f"An error occurred: {e}")
                     pass
 
     fullres = list(filter(None, fullres))
+    return fullres
+
+def process_batch(df, fa_filename, load_fa_psp_ref=True ):#fa_psp_ref_filename=None):
+    fa = pyfaidx.Fasta(fa_filename)
+
+
+    fa_psp_ref = None
+    if load_fa_psp_ref:
+        fa_psp_ref = io_external.read_psite_fasta()
+
+    #if fa_psp_ref_filename is not None:
+    #    fa_psp_ref = pyfaidx.Fasta(fa_psp_ref_filename)
+
+    g = df.groupby("protein")
+
+    fullres = list()
+    for item in tqdm(g):
+        res = process_frame(item, fa, fa_psp_ref)
+        fullres.append(res)
     return fullres
