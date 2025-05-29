@@ -679,12 +679,19 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
     show_default=True,
 )
 @click.option(
+    "--prefix",
+    type=str,
+    default=None,
+    show_default=True,
+    help="prefix to append to beginning of files",
+)
+@click.option(
     "--uniprot-check/--no-uniprot-check", default=False, show_default=True, is_flag=True
 )
 @click.option(
     "-f", "--fasta", type=click.Path(exists=True, dir_okay=False), help="fasta file"
 )
-def run(cores, psms, output_dir, uniprot_check, fasta):
+def run(cores, psms, output_dir, prefix, uniprot_check, fasta):
     """
     this is the main code for compiling site-level expression matrix from from PSMs table from FragPipe.
     for each modi of interest there should be a column of form `aas_mass_shift`.
@@ -736,10 +743,10 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
         decoy_label="rev_",
     )
 
-    save_results(site_reduced, psms[0], name="site_annotation_reduced")
+    save_results(site_reduced, psms[0], name="site_annotation_reduced", prefix=prefix)
 
     site_reduced_mapped = mapper.add_annotations(site_reduced)
-    save_results(site_reduced_mapped, psms[0], name="site_annotation_reduced_mapped")
+    save_results(site_reduced_mapped, psms[0], name="site_annotation_reduced_mapped", prefix=prefix)
 
     return
 
@@ -768,10 +775,12 @@ def process_results(fullres, decoy_label="rev_"):
     return finalres
 
 
-def save_results(finalres, input_file, name="site_annotation_notreduced"):
+def save_results(finalres, input_file, name="site_annotation_notreduced", prefix=None):
+    if prefix is None:
+        prefix = ""
     infile = pathlib.Path(input_file)
     for key, val in finalres.items():
         # outfile = infile.parent / f"{key}_site_annotation_notreduced.tsv"
-        outfile = infile.parent / f"{key}_{name}.tsv"
+        outfile = infile.parent / f"{prefix}{key}_{name}.tsv"
         logger.info(f"Writing {outfile}")
         val.to_csv(outfile, sep="\t", index=False)
