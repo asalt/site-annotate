@@ -3,12 +3,17 @@ import os
 import re
 import glob
 import pathlib
+from functools import partial
 from pathlib import Path
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import janitor
 from Bio import SeqIO
+from pyfaidx import Fasta
 
+from .io_external import read_psite_fasta
 from .utils import data_generator
+from . import mapper
 
 from . import log
 from .constants import VALID_MODI_COLS, POSSIBLE_SITE_ID_COLS
@@ -730,3 +735,131 @@ def write_gct(emat, cdesc, rdesc=None, filename="siteinfo_combined"):
             row_str = f"{gene_name}\t{rdesc_str}\t" + "\t".join(map(str, row_data))
 
             f.write(row_str + "\n")
+
+
+
+def load_and_validate_files(psm_path, fasta_path, uniprot_check):
+
+    # try load phosphositeplus fasta
+    # needs to be downloaded from https://www.phosphosite.org/staticDownloads manually (free non commercial)
+    # fa_psp_ref = load_psite_fasta()
+
+    # logger.info(f"Loading {psm_path}")
+    # df = io.read_psm_file(psm_path)
+
+    # fasta_data = Fasta(fasta_path)
+
+    with ThreadPoolExecutor(
+        max_workers=3
+    ) as executor:  # there's some significant postprocessing these funcs do that makes this worth it, I think
+        # need to time test this with larger files
+        # Submit the function to the executor
+        psp_future = executor.submit(read_psite_fasta)
+        df_future = executor.submit(read_psm_file, psm_path)
+        fasta_future = executor.submit(partial(lambda x: Fasta(x, key_function=lambda x: x.split(" ")[0])), fasta_path)
+
+        fasta_data = fasta_future.result()
+        #
+
+        fa_psp_ref = psp_future.result()
+
+        logger.info(f"Loading {psm_path}")
+        df = df_future.result()
+
+        # logger.info(f"Loading {fasta_path}")
+
+    protein_id_vals = df.protein.unique()
+    protein_id_mappings = fast_token_match(protein_id_vals, fasta_data.keys())
+    if set(df.protein) - set(protein_id_mappings.keys()):
+        raise ValueError("this is not supposed to happen")
+    df['protein'] = df.protein.map(protein_id_mappings)
+
+    if fa_psp_ref:
+        logger.info("FASTA data loaded successfully.")
+    else:
+        logger.info("Failed to load FASTA data.")
+
+    df = mapper.extract_keyvals_pipedsep(df)
+    if uniprot_check:
+        logger.info("adding uniprot info")
+        df = mapper.add_uniprot(df)
+
+    # df = df[ df.mapped_proteins.str.contains("ENSP00000359491") ]
+    # "ENSP00000246785") ]
+    return df, fasta_data, fa_psp_ref  #
+
+
+
+
+def fast_token_match(protein_ids, fasta_headers, fullname_col="fullname", min_score=1, tokenizer=None):
+    """
+    Universal fast token-based matching between protein_ids and FASTA headers using a sparse matrix.
+    Returns a DataFrame: protein_id, best_fasta_fullname, overlap_score.
+    - protein_ids: list or array of protein strings (e.g. 'ENSMUSP00000133117|Fga')
+    - fasta_mapper: DataFrame with at least a 'fullname' column (the full FASTA header)
+    - min_score: minimum required overlap to consider a match (default 1)
+    """
+    import numpy as np
+    from scipy.sparse import csr_matrix
+    def _tokenizer(x):
+        return set(x.replace('-', '|').replace('_', '|').lower().split('|'))
+    if tokenizer is None:
+        tokenizer = _tokenizer
+
+    prot_tokens = [tokenizer(p) for p in protein_ids]
+    fasta_tokens = [tokenizer(f) for f in fasta_headers]
+
+    # Build vocabulary
+    all_tokens = set()
+    for toks in prot_tokens + fasta_tokens:
+        all_tokens.update(toks)
+    all_tokens = sorted(all_tokens)
+    token_idx = {tok: i for i, tok in enumerate(all_tokens)}
+
+    # Encode proteins
+    row, col = [], []
+    for i, toks in enumerate(prot_tokens):
+        for t in toks:
+            if t in token_idx:
+                row.append(i)
+                col.append(token_idx[t])
+    data = np.ones(len(row), dtype=np.uint8)
+    X_prot = csr_matrix((data, (row, col)), shape=(len(protein_ids), len(all_tokens)))
+
+    # Encode FASTA headers
+    row, col = [], []
+    for i, toks in enumerate(fasta_tokens):
+        for t in toks:
+            if t in token_idx:
+                row.append(i)
+                col.append(token_idx[t])
+    data = np.ones(len(row), dtype=np.uint8)
+    X_fasta = csr_matrix((data, (row, col)), shape=(len(fasta_tokens), len(all_tokens)))
+
+    # Matrix multiplication
+    similarity = X_prot @ X_fasta.T  # shape: (n_proteins, n_fasta)
+
+    # Find best match per protein_id
+    best_idx = similarity.argmax(axis=1).A.flatten()  # to 1D numpy
+    best_score = similarity.max(axis=1).A.flatten()
+
+    # matched_fasta = np.array(fasta_headers)[best_idx]
+    matched_fasta = np.array(list(fasta_headers))[best_idx]
+
+    result = pd.DataFrame({
+        "protein_id": protein_ids,
+        "best_fasta_fullname": matched_fasta,#.flaten(),
+        "overlap_score": best_score,#.flatten()
+    })
+
+    # Optional: filter out weak matches
+    # if min_score > 1:
+    lowmatches = result[result["overlap_score"] < min_score]
+    if len(lowmatches) > 0:
+        logger.warning(f"some bad matches between protein column and fasta header")
+        result.loc[lowmatches.index, "best_fasta_fullname"] = result.loc[lowmatches.index, "protein_id"]
+
+    res_dict = result.set_index("protein_id")['best_fasta_fullname'].to_dict()
+
+    return res_dict
+

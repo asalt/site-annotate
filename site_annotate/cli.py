@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import glob
+from functools import partial
 from pprint import pprint
 import subprocess
 import functools
@@ -26,7 +27,7 @@ import janitor
 from . import log
 from . import io
 from . import io_external
-from .io import get_reader, validate_metadata
+from .io import get_reader, validate_metadata, load_and_validate_files
 from . import modisite
 from .utils import data_generator
 from .constants import VALID_MODI_COLS, get_all_columns
@@ -52,6 +53,9 @@ def get_config(name):
     import shutil
 
     new_file = pathlib.Path(".").absolute() / name
+    if new_file.exists():
+        logger.error(f"File {new_file} already exists")
+        raise FileExistsError(f"File {new_file} already exists")
     print(f"Writing {new_file} ")
     shutil.copy(BASE_CONFIG, new_file)
 
@@ -236,17 +240,17 @@ def validate_meta(
     metadata_file: pathlib.Path, data_dir: pathlib.Path, ensure_data=True
 ):
     """
-    top level function to validate metadata
+    top level function to read metadata file and validate it
     """
 
     reader = io.get_reader(str(metadata_file))
-    meta_df = reader(metadata_file)
+    meta_df = reader(metadata_file, dtype={"label": "str"})
     meta_df = io.validate_metadata(meta_df)  # or .pipe
 
     rec_run_searches = meta_df.rec_run_search.unique()
     expr_data = io.find_expr_files(rec_run_searches, data_dir)
     expr_data = {k: v for (k, v) in expr_data.items() if v != None}
-    if len(expr_data) == 0:  # no data
+    if len(expr_data) == 0 and not ensure_data:  # no data
         return
 
     meta_df_final = io.validate_expr_files(expr_data, meta_df)
@@ -739,58 +743,6 @@ def run(cores, psms, output_dir, uniprot_check, fasta):
 
     return
 
-
-def load_psite_fasta():
-    try:
-        # Call the function that reads the FASTA file
-        fa_psp_ref = io_external.read_psite_fasta()
-        return fa_psp_ref
-    except FileNotFoundError:
-        logger.warning("PhosphositePlus fasta not found")
-        return None
-
-
-def load_and_validate_files(psm_path, fasta_path, uniprot_check):
-
-    # try load phosphositeplus fasta
-    # needs to be downloaded from https://www.phosphosite.org/staticDownloads manually (free non commercial)
-    # fa_psp_ref = load_psite_fasta()
-
-    # logger.info(f"Loading {psm_path}")
-    # df = io.read_psm_file(psm_path)
-
-    # fasta_data = Fasta(fasta_path)
-
-    with ThreadPoolExecutor(
-        max_workers=3
-    ) as executor:  # there's some significant postprocessing these funcs do that makes this worth it, I think
-        # need to time test this with larger files
-        # Submit the function to the executor
-        psp_future = executor.submit(load_psite_fasta)
-        df_future = executor.submit(io.read_psm_file, psm_path)
-        fasta_future = executor.submit(Fasta, fasta_path)
-        #
-
-        fa_psp_ref = psp_future.result()
-
-        logger.info(f"Loading {psm_path}")
-        df = df_future.result()
-
-        logger.info(f"Loading {fasta_path}")
-        fasta_data = fasta_future.result()
-
-    if fa_psp_ref:
-        logger.info("FASTA data loaded successfully.")
-    else:
-        logger.info("Failed to load FASTA data.")
-
-    df = mapper.extract_keyvals_pipedsep(df)
-    if uniprot_check:
-        df = mapper.add_uniprot(df)
-
-    # df = df[ df.mapped_proteins.str.contains("ENSP00000359491") ]
-    # "ENSP00000246785") ]
-    return df, fasta_data, fa_psp_ref  #
 
 
 def process_results(fullres, decoy_label="rev_"):
