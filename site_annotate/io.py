@@ -45,8 +45,17 @@ RENAME = {
     "ion_130_141": "TMT_130_C",
     "ion_131_138": "TMT_131_N",
 }
+RENAME_SHORT = {
+    "sample_01": "TMT_126",
+    "sample_02": "TMT_127_N",
+    "sample_03": "TMT_128_N",
+    "sample_04": "TMT_129_N",
+    "sample_05": "TMT_130_N",
+    "sample_06": "TMT_131_N",
+}
 RENAME.update({x.replace("_", "-"): y for x, y in RENAME.items()})
 RENAME.update({x: y + "_intensity" for x, y in RENAME.items()})
+RENAME_SHORT.update({x.replace("_", "-"): y for x, y in RENAME_SHORT.items()})
 
 
 def set_data_dir():
@@ -102,7 +111,7 @@ def _xxget_reader(file: str):
         return None
 
 
-def get_reader(file: str):
+def get_reader(file: str, **kwargs):
     def wrapped_reader(reader):
         def cleaner(*args, **kwargs):
             df = reader(*args, **kwargs)
@@ -150,6 +159,24 @@ def convert_tmt_label(shorthand):
         return re.sub(r"(\d+)_?(C)", r"TMT_\1_C", normalized_input)
     else:
         return f"TMT_{normalized_input}"
+
+
+def convert_tmt_label(shorthand):
+    """Convert shorthand TMT labels to standardized format."""
+    # Remove 'TMT' or 'TMT_' prefix if present
+    normalized_input = re.sub(r"^TMT[_]?", "", shorthand)
+
+    # Explicit special case for 126
+    if normalized_input == "126":
+        return "TMT_126"
+
+    # Handle N and C suffixes
+    match = re.match(r"(\d+)[_]?([NC])$", normalized_input)
+    if match:
+        return f"TMT_{match.group(1)}_{match.group(2)}"
+
+    # Default to "_N" if no suffix is present
+    return f"TMT_{normalized_input}_N"
 
 
 def find_expr_file(rec_run_search: str, data_dir):
@@ -224,6 +251,25 @@ def get_isoform_hierarchy() -> pd.DataFrame:
     return df
 
 
+
+def update_rename(cols, rename_mapping: dict=None) -> dict:
+    if rename_mapping is None:
+        rename_mapping=RENAME
+    new_vals = dict()
+    for key in rename_mapping:
+        matches = [x for x in cols if key in x]
+        if len(matches) == 0:
+            continue
+        if len(matches) > 1:
+            logger.error(f"too many columns match a single key {matches} - {key}")
+        matchval = matches[0]
+        new_vals[matchval] = rename_mapping[key]
+    rename_mapping.update(new_vals)
+    return rename_mapping
+
+            #
+
+
 def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
     """Check if a DataFrame is a valid PSM file.
     this makes use of the proteins and mapped_proteins columns in msfragger output
@@ -244,7 +290,15 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
             raise ValueError(f"Invalid PSM file, missing {required_col} column")
 
     # if not any(df.columns.str.startswith("TMT")):
-    df = df.rename(columns=RENAME)
+    renamer = update_rename(df.columns, RENAME)
+    orig_cols = set(df.columns)
+    renamer_subset = {k:v for k,v in renamer.items() if k in orig_cols} # only reason to do this is for logging info
+
+    df = df.rename(columns=renamer_subset)
+    new_cols = set(df.columns) - orig_cols
+    if len(new_cols) > 0:
+        logger.info(f"renamed {renamer_subset}")
+
     df["mapped_proteins"] = (
         df["protein"] + ", " + df["mapped_proteins"].fillna("").str.replace("@@", ", ")
     )  # mapped_proteins column does not contain the value in the protein column so we add it here
@@ -302,6 +356,9 @@ VALID_NAMES = ["ENSP", "ENST", "ENSG", "geneid", "taxon", "symbol"]
 
 
 def extract_info_from_header(header: str):
+    """
+    extracts key-value pairs of identifier|value and returns as separate columns
+    """
     # example = 'ENSP|ENSMUSP00000022222|ENST|ENSMUST00000022222|ENSG|ENSMUSG00000021709|geneid|59079|taxon|10090|symbol|Erbin|Erbin'
     pattern = r"(\w+)\|([^|]+)"
     # Find all matches
@@ -323,6 +380,20 @@ def read_fasta(file_path):
     df = pd.concat([df, extracted_df], axis=1)
 
     return df
+
+
+# Ensure uniqueness by appending .1, .2, etc., to duplicates
+def make_unique(series):
+    seen = {}
+    unique = []
+    for value in series:
+        if value not in seen:
+            seen[value] = 0
+            unique.append(value)
+        else:
+            seen[value] += 1
+            unique.append(f"{value}.{seen[value]}")
+    return unique
 
 
 def validate_psm_file(df):
@@ -367,8 +438,15 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
         ]
         meta_df.loc[_meta.index, "expr_col"] = None
         meta_df.loc[_meta.index, "expr_file"] = expr_file
-        df = pd.read_table(expr_file, nrows=5)
-        df = df.rename(columns=RENAME)
+        df = get_reader(expr_file)(expr_file, nrows=5)
+
+        rename_dict = RENAME
+        sample_columns = [x for x in df.columns if x.startswith("sample")]
+        if (
+            sample_columns and len(sample_columns) < 10
+        ):  # then tmt 6plex (or similar) no C isotopes
+            rename_dict = RENAME_SHORT
+        df = df.rename(columns=rename_dict)
 
         # if "intensity_sum" not in df.columns:
         #     raise ValueError(f"`intensity_sum` not found in {expr_file}")
@@ -408,20 +486,6 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
     return meta_df
 
 
-# Ensure uniqueness by appending .1, .2, etc., to duplicates
-def make_unique(series):
-    seen = {}
-    unique = []
-    for value in series:
-        if value not in seen:
-            seen[value] = 0
-            unique.append(value)
-        else:
-            seen[value] += 1
-            unique.append(f"{value}.{seen[value]}")
-    return unique
-
-
 def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
     # Load metadata file
 
@@ -438,9 +502,40 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
         expr_data = pd.read_csv(
             expr_file, sep="\t"
         )  # Assuming TSV format for expr files which is true
+
+        # this is tmt-integrator specific
+        if (
+            "Index" in expr_data.columns and "site_id" not in expr_data.columns
+        ):  # Index is of form ProteinID_AApos from tmt-integrator
+            expr_data["site_id"] = expr_data["Index"]
+        if (
+            "SequenceWindow" in expr_data.columns
+            and "fifteenmer" not in expr_data.columns
+        ):
+            expr_data["fifteenmer"] = expr_data["SequenceWindow"]
+        if "sitename" not in expr_data.columns:
+            if "Gene" in expr_data.columns and "ProteinID" in expr_data.columns:
+                expr_data["Gene"] = expr_data["Gene"].fillna("")
+                expr_data["ProteinID"] = expr_data["ProteinID"].fillna("")
+                expr_data["sitename"] = expr_data.apply(
+                    lambda x: x["Gene"] + "_" + x["Index"].lstrip(x["ProteinID"] + "_"),
+                    axis=1,
+                )
+            else:
+                expr_data["sitename"] = expr_data["site_id"]
+
+        #
+
+        sample_columns = [x for x in expr_data.columns if x.startswith("sample")]
+        rename_dict = RENAME
+        if (
+            sample_columns and len(sample_columns) < 10
+        ):  # then tmt 6plex (or similar) no C isotopes
+            rename_dict = RENAME_SHORT
         expr_data = expr_data.rename(
-            columns=RENAME
+            columns=rename_dict
         )  # a universal renamer for various possible names
+
         if "site_id" not in expr_data.columns:
             if "sitename2" in expr_data:
                 site_id = (
@@ -448,7 +543,7 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
                     .fillna("")
                     .agg("_".join, axis=1)
                 )
-            else:
+            elif "sitename" in expr_data:  #
                 site_id = (
                     expr_data[["sitename", "ENSP", "fifteenmer"]]
                     .fillna("")
@@ -456,7 +551,8 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
                 )
             site_id = make_unique(site_id)
             expr_data["site_id"] = site_id
-            expr_data = expr_data.set_index("site_id")
+
+        expr_data = expr_data.set_index("site_id")
 
         # Filter metadata rows corresponding to the current expression file
         file_metadata = metadata[metadata["expr_file"] == expr_file]
@@ -468,7 +564,7 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
         for col in ["ms_lit", "lt_lit"]:
             if col in expr_data.columns:
                 expr_data[[col]] = expr_data[[col]].fillna(0)
-            expr_data[[col]] = expr_data[[col]].astype(int)
+                expr_data[[col]] = expr_data[[col]].astype(int)
         # to_exclude = {
         #     *expr_data.columns.difference(name_mapper.values()),
         #     "spectra",
@@ -567,7 +663,6 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
 
     # import ipdb; ipdb.set_trace()
 
-    # import ipdb; ipdb.set_trace()
     write_gct(combined_emat, cdesc=metadata, rdesc=combined_rdesc, filename=filepath)
 
     combined_df = combined_rdesc.join(combined_emat)
