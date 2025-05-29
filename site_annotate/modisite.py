@@ -105,23 +105,32 @@ def create_15mer(sequence, position):  # ! position is 1 indexed
         reslist[7] = reslist[7].lower()
     except IndexError:
         1+1
+        raise IndexError()
     return "".join(reslist)
 
 
 def quant_isobaric_site(psms_positions):
+    """
+    expects quant cols named TMT
+    """
     tmtsum = psms_positions.filter(like="TMT").sum(axis=1)
     psms_positions["tmt_sum"] = tmtsum
 
-    ratios = psms_positions.filter(like="TMT").div(psms_positions.tmt_sum, axis=0)
-    _rename = {col: f"{col}_ratio" for col in ratios.columns}
-    ratios = ratios.rename(columns=_rename)
+    quant_cols = psms_positions.filter(like="TMT").columns
+    ratios = psms_positions[quant_cols].div(psms_positions.tmt_sum, axis=0)
+    not_quant_cols = [ x for x in psms_positions.columns if x not in quant_cols ] 
     #
 
     intensity_dstr = ratios.mul(psms_positions["intensity"], axis=0)
-    _rename = {col: col.strip("ratio") + "intensity" for col in intensity_dstr.columns}
+    _rename = {col: col.strip("_ratio") + "_intensity" for col in intensity_dstr.columns}
     intensity_dstr = intensity_dstr.rename(columns=_rename)
 
-    fullres = pd.concat([psms_positions, ratios, intensity_dstr], axis=1)
+
+    # for concatenation
+    _rename = {col: f"{col}_ratio" for col in ratios.columns}
+    ratios = ratios.rename(columns=_rename)
+
+    fullres = pd.concat([psms_positions[not_quant_cols], ratios, intensity_dstr], axis=1)
 
     return fullres
 

@@ -12,9 +12,9 @@ from pathlib import Path
 import click
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import product
 
 from rapidfuzz import process, fuzz
@@ -30,7 +30,7 @@ from . import io_external
 from .io import get_reader, validate_metadata, load_and_validate_files
 from . import modisite
 from .utils import data_generator
-from .constants import VALID_MODI_COLS, get_all_columns
+#from .constants import VALID_MODI_COLS, get_all_columns
 from .runner import run_pipeline
 from . import mapper
 from . import reduce

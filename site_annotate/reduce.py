@@ -16,7 +16,7 @@ from . import io
 logger = log.get_logger(__file__)
 
 
-tmt_pat = re.compile(r"TMT_(\d+)_intensity")
+#tmt_pat = re.compile(r".*TMT_(\d+)_intensity")
 
 
 def make_nr(df_reduced) -> pd.DataFrame:
@@ -194,10 +194,15 @@ def _reduce_sites(df):
     # Summarize by calculating the sum of TMT intensities
     # agg1
     result1 = None
-    if any([tmt_pat.match(col) for col in df.columns]):
+    #if any([tmt_pat.match(col) for col in df.columns]):
+    if any("TMT" in x for x in df.columns):
         _agg_dict = {
-            col: "sum" for col in df.columns if "TMT_" in col and "intensity" in col
+            col: "sum" for col in df.columns if "TMT_" in col and "intensity" in col and "ratio" not in col
         }
+        _agg_dict.update( {
+            col: "mean" for col in df.columns if "TMT_" in col and "ratio" in col})
+
+
         # else:
         #     if 'intensity' not in df.columns:
         #         logger.error(f"no intensity or TMT intensity columns present")
@@ -224,11 +229,11 @@ def _reduce_sites(df):
 
     # result = pd.concat([result1, result2, result3], axis=1)
     result = pd.concat(
-        [
+            filter(lambda x: x is not None, [
             result2,
             result3,
             result1,
-        ],
+        ]),
         axis=1,
     )
 

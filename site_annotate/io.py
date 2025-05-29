@@ -59,8 +59,9 @@ RENAME_SHORT = {
     "sample_06": "TMT_131_N",
 }
 RENAME.update({x.replace("_", "-"): y for x, y in RENAME.items()})
-RENAME.update({x: y + "_intensity" for x, y in RENAME.items()})
+RENAME.update({x+"_intensity": y for x, y in RENAME.items()})
 RENAME_SHORT.update({x.replace("_", "-"): y for x, y in RENAME_SHORT.items()})
+RENAME_SHORT.update({x+"_intensity": y for x, y in RENAME.items()})
 
 
 def set_data_dir():
@@ -257,6 +258,12 @@ def get_isoform_hierarchy() -> pd.DataFrame:
 
 
 
+def get_rename_dict(sample_cols):
+
+    if len(sample_cols) < 10:  # then tmt 6plex (or similar) no C isotopes
+        return update_rename(sample_cols, RENAME_SHORT)
+    return update_rename(sample_cols, RENAME)
+
 def update_rename(cols, rename_mapping: dict=None) -> dict:
     if rename_mapping is None:
         rename_mapping=RENAME
@@ -268,7 +275,7 @@ def update_rename(cols, rename_mapping: dict=None) -> dict:
         if len(matches) > 1:
             logger.error(f"too many columns match a single key {matches} - {key}")
         matchval = matches[0]
-        new_vals[matchval] = rename_mapping[key]
+        new_vals[matchval] = matchval + "_" + rename_mapping[key]
     rename_mapping.update(new_vals)
     return rename_mapping
 
@@ -295,7 +302,8 @@ def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
             raise ValueError(f"Invalid PSM file, missing {required_col} column")
 
     # if not any(df.columns.str.startswith("TMT")):
-    renamer = update_rename(df.columns, RENAME)
+    #renamer = update_rename(df.columns, RENAME)
+    renamer = get_rename_dict(df.columns)
     orig_cols = set(df.columns)
     renamer_subset = {k:v for k,v in renamer.items() if k in orig_cols} # only reason to do this is for logging info
 
@@ -429,6 +437,7 @@ def validate_psm_file(df):
     # if 'peptide' not in
 
 
+
 def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
     """ """
     for rrs, expr_file in rec_run_searches.items():
@@ -445,13 +454,14 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
         meta_df.loc[_meta.index, "expr_file"] = expr_file
         df = get_reader(expr_file)(expr_file, nrows=5)
 
-        rename_dict = RENAME
+        #rename_dict = RENAME
         sample_columns = [x for x in df.columns if x.startswith("sample")]
-        if (
-            sample_columns and len(sample_columns) < 10
-        ):  # then tmt 6plex (or similar) no C isotopes
-            rename_dict = RENAME_SHORT
-        df = df.rename(columns=rename_dict)
+        rename_dict = get_rename_dict(sample_columns)
+        # if (
+        #     sample_columns and len(sample_columns) < 10
+        # ):  # then tmt 6plex (or similar) no C isotopes
+        #     rename_dict = RENAME_SHORT
+        # df = df.rename(columns=rename_dict)
 
         # if "intensity_sum" not in df.columns:
         #     raise ValueError(f"`intensity_sum` not found in {expr_file}")
