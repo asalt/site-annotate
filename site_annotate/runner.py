@@ -93,17 +93,23 @@ def run_pipeline(
 
     fullres = list()
 
+    g = df.groupby("protein")
     if cores == 1:
-        g = df.groupby("protein")
         for item in tqdm(g):
             res = process_frame(item, fa, fa_psp_ref)
             fullres.append(res)
 
     if cores > 1: # this is much slower too much tme copying data to workers, need to batch it better
-        batch_size = len(df) // cores
-        idxs = [x for x in range(0, len(df), batch_size)]
-        idxs[-1] = idxs[-1] + (len(df) - idxs[-1])
-        batches = [df.iloc[a:b] for a,b in zip(idxs[0:-1], idxs[1:])]
+        group_keys = list(g.groups)
+        batch_size = len(group_keys) // cores
+        idxs = [x for x in range(0, len(group_keys), batch_size)]
+        idxs[-1] = idxs[-1] + (len(group_keys) - idxs[-1])
+        group_batches = [group_keys[a:b] for a,b in zip(idxs[0:-1], idxs[1:])]
+        # indices = [[*g.indices[grp] for grp in group_batch] for group_batch in group_batches]
+        indices = [ [i for grp in group_batch for i in g.indices[grp]]
+                        for group_batch in group_batches
+                    ]
+        batches = [df.loc[ixs] for ixs in indices]
 
         with ProcessPoolExecutor(max_workers=cores) as executor:
             futures = {
