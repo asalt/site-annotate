@@ -14,6 +14,10 @@ def run_r_code_with_params(params_dict, interactive=False):
     run_source = pathlib.Path(__file__).parent / ".." / "R" / "run.R"
     r_folder = run_source.parent
 
+    for key in ("data_dir", "config_file", "gct_file"):
+        if key not in params_dict:
+            raise ValueError(f"{key} not defined")
+
     assert os.path.exists(run_source), f"File not found: {run_source}"
 
     # Escape curly braces in the R code
@@ -49,17 +53,17 @@ def run_r_code_with_params(params_dict, interactive=False):
     try:
         if not interactive:
 
-            process = subprocess.Popen(
-                ["R", "--no-save"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,  # Ensure text mode for stdin/stdout
-            )
-            # Send commands to the R session
-            stdout, stderr = process.communicate(input=temp_r_path)
-            subprocess.run(["R", "--no-save", "-f", temp_r_path], check=True)
-            subprocess.run(["R", "--no-save", "-f", temp_r_path], check=True)
+            # process = subprocess.Popen(
+            #     ["R", "--no-save"],
+            #     stdin=subprocess.PIPE,
+            #     stdout=subprocess.PIPE,
+            #     stderr=subprocess.PIPE,
+            #     text=True,  # Ensure text mode for stdin/stdout
+            # )
+            # # Send commands to the R session
+            # stdout, stderr = process.communicate(input=temp_r_path)
+            subprocess.run(["Rscript", "--no-save", temp_r_path], check=True)
+            # subprocess.run(["R", "--no-save", "-f", temp_r_path], check=True)
         else:
             robjects.r(r_code)
 

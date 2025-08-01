@@ -25,12 +25,13 @@ from pyfaidx import Fasta
 import janitor
 
 from . import log
-from . import io
+from .io import io
 from . import io_external
-from .io import get_reader, validate_metadata, load_and_validate_files
+from .io.io import get_reader, validate_metadata, load_and_validate_files
 from . import modisite
 from .utils import data_generator
-#from .constants import VALID_MODI_COLS, get_all_columns
+
+# from .constants import VALID_MODI_COLS, get_all_columns
 from .runner import run_pipeline
 from . import mapper
 from . import reduce
@@ -84,11 +85,11 @@ def prepare_params(
 
     # Resolve paths
     if config:
-        params_dict["config"] = str(pathlib.Path(config).absolute())
+        params_dict["config_file"] = str(pathlib.Path(config).absolute())
     if gct:
         if not os.path.exists(gct):
             raise FileNotFoundError(f"{gct} does not exist")
-        params_dict["gct"] = str(pathlib.Path(gct).absolute())
+        params_dict["gct_file"] = str(pathlib.Path(gct).absolute())
     if data_dir:
         params_dict["data_dir"] = str(pathlib.Path(data_dir).absolute())
     if output_dir is None:
@@ -254,6 +255,7 @@ def validate_meta(
         return
 
     meta_df_final_collection = io.validate_expr_files(expr_data, meta_df)
+
     logger.info(f"successfully validated {metadata_file}")
 
     return meta_df_final_collection
@@ -279,6 +281,11 @@ def check_meta(metadata, data_dir):
 
 
 @main.command()
+@click.option("--cores", default=1, show_default=True)
+@click.option("--taxon", type=str, default=None, show_default=True)
+@click.option(
+    "--make-nr/--no-make-nr", type=bool, default=True, is_flag=True, show_default=True
+)
 @click.option(
     "--result-dir", type=click.Path(exists=False, file_okay=False, dir_okay=True)
 )
@@ -289,7 +296,7 @@ def check_meta(metadata, data_dir):
     default=click.Path("."),
     # show_default=True,
 )
-def merge_meta(result_dir, metadata, data_dir):
+def merge_meta(cores, taxon, make_nr, result_dir, metadata, data_dir):
     r"""
     [DATA_DIR] is the directory where the data files are located
 
@@ -320,14 +327,27 @@ def merge_meta(result_dir, metadata, data_dir):
     meta_validated_collection = validate_meta(metadata, data_dir)
 
     for name, meta_validated in meta_validated_collection.items():
-        meta_validated_fname = metadata.parent / (metadata.stem + f"_{name}_validated.tsv")
+        meta_validated_fname = metadata.parent / (
+            metadata.stem + f"_{name}_validated.tsv"
+        )
         logger.info(f"writing {meta_validated_fname}")
         meta_validated.to_csv(meta_validated_fname, sep="\t", index=False)
 
-        outname = result_dir / (metadata.stem + f"_{name}_siteinfo_combined")
+        taxon_str, nr_str = "", ""
+        if taxon is not None:
+            taxon_str = f"_{taxon}"
+        if make_nr:
+            nr_str = "_nr"
+
+        outname = result_dir / (
+            metadata.stem + f"_{name}_siteinfo_combined{taxon_str}{nr_str}"
+        )
         # ===
         logger.info(f"preparing {outname}")
-        res = io.merge_metadata(meta_validated, outname)  # writes gct file to output
+
+        res = io.merge_metadata(
+            meta_validated, outname, taxon=taxon, make_nr=make_nr, cores=cores
+        )  # writes gct file to output
 
 
 def match_columns(sample_names: list, df: pd.DataFrame, threshold=97):
@@ -749,10 +769,14 @@ def run(cores, psms, output_dir, prefix, uniprot_check, fasta):
     save_results(site_reduced, psms[0], name="site_annotation_reduced", prefix=prefix)
 
     site_reduced_mapped = mapper.add_annotations(site_reduced)
-    save_results(site_reduced_mapped, psms[0], name="site_annotation_reduced_mapped", prefix=prefix)
+    save_results(
+        site_reduced_mapped,
+        psms[0],
+        name="site_annotation_reduced_mapped",
+        prefix=prefix,
+    )
 
     return
-
 
 
 def process_results(fullres, decoy_label="rev_"):
