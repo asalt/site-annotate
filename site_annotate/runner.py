@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 import pyfaidx
 from tqdm import tqdm
 
-from . import io
+from .io import io
 from . import io_external
 from . import modisite
 from .log import get_logger
@@ -22,8 +22,6 @@ def process_frame(key_frame, fa, fa_psp_ref=None):
     # if 'Cont' not in key:
     #     print()
     # subfa = fa[(fa["id"] == key) & (~fa["id"].str.startswith(DECOY_FLAG))]
-    # import ipdb; ipdb.set_trace()
-    # import ipdb; ipdb.set_trace()
     try:
         subfa = fa[key]
     except KeyError:
@@ -86,7 +84,6 @@ def run_pipeline(
     if fa_psp_ref is not None and not isinstance(fa_psp_ref, pyfaidx.Fasta):
         raise ValueError("fa_psp_ref should be a pyfaidx.Fasta object")
 
-    # import ipdb; ipdb.set_trace()
     modis_for_processing = set(df.columns) & set(VALID_MODI_COLS)
     # if "m_15_9949" in modis_for_processing:
     #     modis_for_processing.remove("m_15_9949")
@@ -99,22 +96,30 @@ def run_pipeline(
             res = process_frame(item, fa, fa_psp_ref)
             fullres.append(res)
 
-    if cores > 1: # this is much slower too much tme copying data to workers, need to batch it better
+    if (
+        cores > 1
+    ):  # this is much slower too much tme copying data to workers, need to batch it better
         group_keys = list(g.groups)
         batch_size = len(group_keys) // cores
         idxs = [x for x in range(0, len(group_keys), batch_size)]
         idxs[-1] = idxs[-1] + (len(group_keys) - idxs[-1])
-        group_batches = [group_keys[a:b] for a,b in zip(idxs[0:-1], idxs[1:])]
+        group_batches = [group_keys[a:b] for a, b in zip(idxs[0:-1], idxs[1:])]
         # indices = [[*g.indices[grp] for grp in group_batch] for group_batch in group_batches]
-        indices = [ [i for grp in group_batch for i in g.indices[grp]]
-                        for group_batch in group_batches
-                    ]
+        indices = [
+            [i for grp in group_batch for i in g.indices[grp]]
+            for group_batch in group_batches
+        ]
         batches = [df.loc[ixs] for ixs in indices]
 
         with ProcessPoolExecutor(max_workers=cores) as executor:
             futures = {
-                    executor.submit(process_batch, subdf, fa.filename, fa_psp_ref.filename if fa_psp_ref else None)
-                    for subdf in batches
+                executor.submit(
+                    process_batch,
+                    subdf,
+                    fa.filename,
+                    fa_psp_ref.filename if fa_psp_ref else None,
+                )
+                for subdf in batches
                 # executor.submit(process_frame, item, fa, fa_psp_ref): item for item in g
             }
 
@@ -126,7 +131,7 @@ def run_pipeline(
             ):
                 try:
                     result = future.result()
-                    #fullres.append(result)
+                    # fullres.append(result)
                     fullres.extend(result)
                 except Exception as e:
 
@@ -136,15 +141,15 @@ def run_pipeline(
     fullres = list(filter(None, fullres))
     return fullres
 
-def process_batch(df, fa_filename, load_fa_psp_ref=True ):#fa_psp_ref_filename=None):
-    fa = pyfaidx.Fasta(fa_filename)
 
+def process_batch(df, fa_filename, load_fa_psp_ref=True):  # fa_psp_ref_filename=None):
+    fa = pyfaidx.Fasta(fa_filename)
 
     fa_psp_ref = None
     if load_fa_psp_ref:
         fa_psp_ref = io_external.read_psite_fasta()
 
-    #if fa_psp_ref_filename is not None:
+    # if fa_psp_ref_filename is not None:
     #    fa_psp_ref = pyfaidx.Fasta(fa_psp_ref_filename)
 
     g = df.groupby("protein")
