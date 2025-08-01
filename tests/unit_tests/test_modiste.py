@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 from site_annotate import modisite
-import site_annotate.io
+from site_annotate.io import io
 from site_annotate.modisite import reset_inner_index
 from pytest import approx
 
@@ -28,7 +28,7 @@ def test_explode_mapped_proteins_realdata():
     fa_fx = Fasta(fa)
 
     df = pd.read_csv(f, sep="\t")
-    df = site_annotate.io.prepare_psm_file(df)
+    df = io.prepare_psm_file(df)
 
     res = runner.run_pipeline(df, fa_fx, cores=1)  # this uses modisite funcs
     resl = [x["sty_79_9663"] for x in res]

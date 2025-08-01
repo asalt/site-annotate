@@ -11,64 +11,22 @@ import janitor
 from Bio import SeqIO
 from pyfaidx import Fasta
 
-from .io_external import read_psite_fasta
-from .utils import data_generator
-from . import mapper
+from ..io_external import read_psite_fasta
+from ..utils import data_generator
+from .. import mapper
 
-from . import log
-from .constants import VALID_MODI_COLS, POSSIBLE_SITE_ID_COLS
+from .. import log
+from .. import reduce
+from ..constants import VALID_MODI_COLS, POSSIBLE_SITE_ID_COLS, RENAME, RENAME_SHORT
 
 logger = log.get_logger(__file__)
-
-RENAME = {
-    "sample_01": "TMT_126",
-    "sample_02": "TMT_127_N",
-    "sample_03": "TMT_127_C",
-    "sample_04": "TMT_128_N",
-    "sample_05": "TMT_128_C",
-    "sample_06": "TMT_129_N",
-    "sample_07": "TMT_129_C",
-    "sample_08": "TMT_130_N",
-    "sample_09": "TMT_130_C",
-    "sample_10": "TMT_131_N",
-    "sample_11": "TMT_131_C",
-    "sample_12": "TMT_132_N",
-    "sample_13": "TMT_132_C",
-    "sample_14": "TMT_133_N",
-    "sample_15": "TMT_133_C",
-    "sample_16": "TMT_134_N",
-    "sample_17": "TMT_134_C",
-    "sample_18": "TMT_135_N",
-    "ion_126_128": "TMT_126",
-    "ion_127_125": "TMT_127_N",
-    "ion_127_131": "TMT_127_C",
-    "ion_128_128": "TMT_128_N",
-    "ion_128_134": "TMT_128_C",
-    "ion_129_131": "TMT_129_N",
-    "ion_129_138": "TMT_129_C",
-    "ion_130_135": "TMT_123_N",
-    "ion_130_141": "TMT_130_C",
-    "ion_131_138": "TMT_131_N",
-}
-RENAME_SHORT = {
-    "sample_01": "TMT_126",
-    "sample_02": "TMT_127_N",
-    "sample_03": "TMT_128_N",
-    "sample_04": "TMT_129_N",
-    "sample_05": "TMT_130_N",
-    "sample_06": "TMT_131_N",
-}
-RENAME.update({x.replace("_", "-"): y for x, y in RENAME.items()})
-RENAME.update({x+"_intensity": y for x, y in RENAME.items()})
-RENAME_SHORT.update({x+"_intensity": y for x, y in RENAME.items()})
-RENAME_SHORT.update({x.replace("_", "-"): y for x, y in RENAME_SHORT.items()})
 
 
 def set_data_dir():
     # Path of the current script
     current_script_path = Path(__file__).resolve()
     # Path to the top-level data directory
-    res = current_script_path.parent.parent / "data"
+    res = current_script_path.parent.parent.parent / "data"
     logger.debug(f"data dir set to {res}")
     return res
 
@@ -76,7 +34,7 @@ def set_data_dir():
 data_dir = set_data_dir()
 
 
-def conf_to_dataframe(conf_file, set_index=False):
+def conf_to_dataframe(conf_file, set_index=False, dtype: dict = None):
     # Initialize config parser
     import configparser
 
@@ -95,6 +53,10 @@ def conf_to_dataframe(conf_file, set_index=False):
 
     # Convert dictionary to DataFrame
     df = pd.DataFrame.from_dict(data, orient="index")
+    if dtype:
+        for col, typ in dtype.items():
+            if col in df.columns:
+                df[col] = df[col].astype(typ)
 
     # Optional: Set 'name' as index
     if set_index:
@@ -150,25 +112,6 @@ def get_reader(file: str, **kwargs):
 
 
 def convert_tmt_label(shorthand):
-    # Normalize the input by removing 'TMT' or 'TMT_' if present
-    normalized_input = re.sub(r"TMT[_]?", "", shorthand)
-
-    # Conditional cases equivalent to R's case_when
-    if normalized_input == "126":
-        return "TMT_126"
-    elif normalized_input == "131":
-        return "TMT_131_N"
-    elif normalized_input == "134":
-        return "TMT_134_N"
-    elif re.search(r"N$", normalized_input):
-        return re.sub(r"(\d+)_?(N)", r"TMT_\1_N", normalized_input)
-    elif re.search(r"C$", normalized_input):
-        return re.sub(r"(\d+)_?(C)", r"TMT_\1_C", normalized_input)
-    else:
-        return f"TMT_{normalized_input}"
-
-
-def convert_tmt_label(shorthand):
     """Convert shorthand TMT labels to standardized format."""
     # Remove 'TMT' or 'TMT_' prefix if present
     normalized_input = re.sub(r"^TMT[_]?", "", shorthand)
@@ -186,12 +129,12 @@ def convert_tmt_label(shorthand):
     return f"TMT_{normalized_input}_N"
 
 
-def find_expr_file(rec_run_search: str, data_dir): # TODO fix this
+def find_expr_file(rec_run_search: str, data_dir):  # TODO fix this
     """
     data_dir should be absolute path by this point
     """
-    search_pattern = os.path.join(data_dir, "**", f"{rec_run_search}*reduced*mapped*tsv")
-    results = glob.glob(search_pattern)
+    search_pattern = os.path.join(data_dir, f"{rec_run_search}*reduced*mapped*tsv")
+    results = glob.glob(search_pattern, recursive=True)
 
     if not results:  # try one more time
         logger.info(f"trying again with not reduced")
@@ -200,11 +143,14 @@ def find_expr_file(rec_run_search: str, data_dir): # TODO fix this
 
     if len(results) == 0:
         logger.warning(f"no files found for {rec_run_search} in {data_dir}, skipping")
-        #raise FileNotFoundError(f"no files found for {rec_run_search} in {data_dir}")
+
+    for result in results:
+        logger.debug(f"found {result} for {rec_run_search}")
+        # raise FileNotFoundError(f"no files found for {rec_run_search} in {data_dir}")
     # if len(results) > 1:
     #     #if any('mapped'  in x for x in results):
     #     #    results = [x for x in results if 'mapped' in x]
-    #     results = 
+    #     results =
     #     logger.warning(
     #         f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
     #     )
@@ -238,6 +184,11 @@ def validate_metadata(df: pd.DataFrame, default_runno=1, default_searchno=7):
     )
 
     if "label" in df.columns:
+        renamer = get_rename_dict(
+            df.label.unique(), protected=df.label.unique().tolist()
+        )
+
+        df["label"] = df["label"].map(renamer)
         df["label"] = df["label"].apply(convert_tmt_label)
         # can add a check here to assert unique by label and rec_run_search
 
@@ -249,7 +200,13 @@ def validate_metadata(df: pd.DataFrame, default_runno=1, default_searchno=7):
     return df
 
 
+_ISOFORM_DF = None
+
+
 def get_isoform_hierarchy() -> pd.DataFrame:
+    global _ISOFORM_DF
+    if _ISOFORM_DF is not None:
+        return _ISOFORM_DF
     target1 = data_dir / "GENCODE.M32.basic.CHR.protein.selection.mapping.txt"
     target2 = data_dir / "GENCODE.V42.basic.CHR.isoform.selection.mapping.txt"
     logger.info(f"Reading {target1}")
@@ -258,11 +215,11 @@ def get_isoform_hierarchy() -> pd.DataFrame:
     df2 = pd.read_table(target2, sep="\t", low_memory=False)
     df = pd.concat([df1, df2])
     df = janitor.clean_names(df)
+    _ISOFORM_DF = df
     return df
 
 
-
-def get_rename_dict(sample_cols, protected=None): 
+def get_rename_dict(sample_cols, protected=None):
     """
     chooses RENAME or RENAME_SHORT
     """
@@ -270,9 +227,10 @@ def get_rename_dict(sample_cols, protected=None):
         return update_rename(sample_cols, RENAME_SHORT, protected)
     return update_rename(sample_cols, RENAME, protected)
 
-def update_rename(cols, rename_mapping: dict=None, protected=None) -> dict:
+
+def update_rename(cols, rename_mapping: dict = None, protected=None) -> dict:
     if rename_mapping is None:
-        rename_mapping=RENAME
+        rename_mapping = RENAME
     new_vals = dict()
     for key in rename_mapping:
         if protected is not None and key in protected:
@@ -285,79 +243,72 @@ def update_rename(cols, rename_mapping: dict=None, protected=None) -> dict:
             logger.warning(f"too many columns match a single key {matches} - {key}")
             continue
         matchval = matches[0]
-        new_vals[matchval] = matchval + "_" + rename_mapping[key]
+        # new_vals[matchval] = matchval + "_" + rename_mapping[key]
+        new_vals[matchval] = rename_mapping[key]
     rename_mapping.update(new_vals)
     return rename_mapping
 
-            #
+    #
 
 
-def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
-    """Check if a DataFrame is a valid PSM file.
-    this makes use of the proteins and mapped_proteins columns in msfragger output
-    """
-    # Check if a DataFrame is a valid PSM file
-    required_cols = ["peptide", "intensity", "protein", "mapped_proteins"]
-
-    if "intensity" not in df.columns:
-        for _x in ("area", "peakarea", "peak_area"):
-            if _x in df.columns:
-                df["intensity"] = df[_x]
-    if "mapped_proteins" not in df.columns:
-        if "alternative_proteins" in df.columns:
-            df["mapped_proteins"] = df["alternative_proteins"]
-
-    for required_col in required_cols:
-        if required_col not in df.columns:
-            raise ValueError(f"Invalid PSM file, missing {required_col} column")
-
-    # if not any(df.columns.str.startswith("TMT")):
-    #renamer = update_rename(df.columns, RENAME)
-    renamer = get_rename_dict(df.columns)
-    orig_cols = set(df.columns)
-    renamer_subset = {k:v for k,v in renamer.items() if k in orig_cols} # only reason to do this is for logging info
-
-    df = df.rename(columns=renamer_subset)
-    new_cols = set(df.columns) - orig_cols
-    if len(new_cols) > 0:
-        logger.info(f"renamed {renamer_subset}")
-
-    df["mapped_proteins"] = (
-        df["protein"] + ", " + df["mapped_proteins"].fillna("").str.replace("@@", ", ")
-    )  # mapped_proteins column does not contain the value in the protein column so we add it here
-    df["mapped_proteins2"] = df["mapped_proteins"].apply(
-        lambda x: x.split(", ") if isinstance(x, str) else []
-    )
-    df["mapped_proteins2"] = df["mapped_proteins2"].apply(
-        lambda x: list(filter(None, set(x)))
-    )
-
-    # # Step 2: Explode the 'mapped_proteins' column
-    # df_exploded = df[[*required_cols, "mapped_proteins2"]].explode("mapped_proteins2")
-    df_exploded = df.explode("mapped_proteins2")
-    df_exploded = df_exploded.reset_index(drop=True)
-    df_exploded["protein"] = df_exploded["mapped_proteins2"]
-
-    # return df
-    return df_exploded
-
-
-def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:
-    """Read a PSM file into a DataFrame."""
-    # Read a PSM file into a DataFrame
-    df = pd.read_csv(psm_file, sep="\t")
-    df = janitor.clean_names(df)
-    # df = df[df.protein.str.contains("Tcf12")]
-    df = prepare_psm_file(df)
-    validate_psm_file(df)
-    return df
+# def prepare_psm_file(df: pd.DataFrame) -> pd.DataFrame:
+#     """Check if a DataFrame is a valid PSM file.
+#     this makes use of the proteins and mapped_proteins columns in msfragger output
+#     """
+#     # Check if a DataFrame is a valid PSM file
+#     required_cols = ["peptide", "intensity", "protein", "mapped_proteins"]
+#
+#     if "intensity" not in df.columns:
+#         for _x in ("area", "peakarea", "peak_area"):
+#             if _x in df.columns:
+#                 df["intensity"] = df[_x]
+#     if "mapped_proteins" not in df.columns:
+#         if "alternative_proteins" in df.columns:
+#             df["mapped_proteins"] = df["alternative_proteins"]
+#
+#     for required_col in required_cols:
+#         if required_col not in df.columns:
+#             raise ValueError(f"Invalid PSM file, missing {required_col} column")
+#
+#     # if not any(df.columns.str.startswith("TMT")):
+#     #renamer = update_rename(df.columns, RENAME)
+#     renamer = get_rename_dict(df.columns)
+#     orig_cols = set(df.columns)
+#     renamer_subset = {k:v for k,v in renamer.items() if k in orig_cols} # only reason to do this is for logging info
+#
+#     df = df.rename(columns=renamer_subset)
+#     new_cols = set(df.columns) - orig_cols
+#     if len(new_cols) > 0:
+#         logger.info(f"renamed {renamer_subset}")
+#
+#     df["mapped_proteins"] = (
+#         df["protein"] + ", " + df["mapped_proteins"].fillna("").str.replace("@@", ", ")
+#     )  # mapped_proteins column does not contain the value in the protein column so we add it here
+#     df["mapped_proteins2"] = df["mapped_proteins"].apply(
+#         lambda x: x.split(", ") if isinstance(x, str) else []
+#     )
+#     df["mapped_proteins2"] = df["mapped_proteins2"].apply(
+#         lambda x: list(filter(None, set(x)))
+#     )
+#
+#     # # Step 2: Explode the 'mapped_proteins' column
+#     # df_exploded = df[[*required_cols, "mapped_proteins2"]].explode("mapped_proteins2")
+#     df_exploded = df.explode("mapped_proteins2")
+#     df_exploded = df_exploded.reset_index(drop=True)
+#     df_exploded["protein"] = df_exploded["mapped_proteins2"]
+#
+#     # return df
+#     return df_exploded
 
 
-def rename_columns(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
-    """Rename columns in a DataFrame."""
-    # Rename columns in a DataFrame
-    df = df.rename(columns=mapping)
-    return df
+# def read_psm_file(psm_file: str | pathlib.Path) -> pd.DataFrame:
+#     """Read a PSM file into a DataFrame."""
+#     # Read a PSM file into a DataFrame
+#     df = pd.read_csv(psm_file, sep="\t")
+#     df = janitor.clean_names(df)
+#     df = prepare_psm_file(df)
+#     validate_psm_file(df)
+#     return df
 
 
 def read_sequence_file_to_dataframe(file_path, file_format="fasta"):
@@ -405,20 +356,6 @@ def read_fasta(file_path):
     return df
 
 
-# Ensure uniqueness by appending .1, .2, etc., to duplicates
-def make_unique(series):
-    seen = {}
-    unique = []
-    for value in series:
-        if value not in seen:
-            seen[value] = 0
-            unique.append(value)
-        else:
-            seen[value] += 1
-            unique.append(f"{value}.{seen[value]}")
-    return unique
-
-
 def validate_psm_file(df):
     exampledata = data_generator.generate_test_data(1)
     exampledata = janitor.clean_names(exampledata)
@@ -447,9 +384,8 @@ def validate_psm_file(df):
     # if 'peptide' not in
 
 
-
 def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
-    """ 
+    """
     type is Dict[str] -> list
     """
     results = dict()
@@ -469,7 +405,7 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
             meta_df.loc[_meta.index, "expr_file"] = expr_file
             df = get_reader(expr_file)(expr_file, nrows=5)
 
-            #rename_dict = RENAME
+            # rename_dict = RENAME
             # this will fail if it is no longer called "sample"
             sample_columns = [x for x in df.columns if x.startswith("sample")]
             rename_dict = get_rename_dict(sample_columns)
@@ -489,7 +425,9 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
 
             if "label" in _meta.columns:
                 for label in _meta["label"].tolist():
-                    label_mapping = [x for x in df.columns if label in x and 'ratio' not in x] # 
+                    label_mapping = [
+                        x for x in df.columns if label in x and "ratio" not in x
+                    ]  #
                     # ratio is a col we arent interested in
                     if len(label_mapping) == 0:
                         logger.warning(f"could not find sample with label {label}")
@@ -505,9 +443,7 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
                     ].index
                     if (len(ix)) != 1:
                         raise ValueError()
-                        import ipdb
 
-                        ipdb.set_trace()
                         1 + 1
                     ix = ix[0]
                     meta_df.loc[ix, "expr_col"] = expr_col
@@ -516,16 +452,21 @@ def validate_expr_files(rec_run_searches: dict, meta_df: pd.DataFrame):
                 expr_col = "intensity_sum"
                 meta_df.loc[_meta.index, "expr_col"] = "intensity_sum"
 
-
             basename = os.path.split(str(expr_file))[-1]
             key = os.path.splitext(basename)[0]
-            key = re.sub('site_.*', 'site', key)
+            key = re.sub("site_.*", "site", key)
             key = key.lstrip(rrs)
-            results[key] = meta_df.copy()  #copy again
+            results[key] = meta_df.copy()  # copy again
     return results
 
 
-def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
+def merge_metadata(
+    metadata: pd.DataFrame,
+    filepath="siteinfo_combined",
+    taxon=None,
+    make_nr=True,
+    **kwargs,
+):
     """
     merge and write gct
     """
@@ -569,32 +510,24 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
         #
 
         # default philosopher samplenames are of form experiment_sample_xx
-        sample_columns = [x for x in expr_data.columns if (("sample_" in x or x.endswith("intensity")) and "ratio" not in x)]
-        #rename_dict = get_rename_dict(sample_columns, protected=metadata.expr_col.dropna().tolist())
-        #expr_data = expr_data.rename(
+        sample_columns = [
+            x
+            for x in expr_data.columns
+            if (("sample_" in x or x.endswith("intensity")) and "ratio" not in x)
+        ]
+        # rename_dict = get_rename_dict(sample_columns, protected=metadata.expr_col.dropna().tolist())
+        # expr_data = expr_data.rename(
         #    columns=rename_dict
-        #)  # a universal renamer for various possible names
+        # )  # a universal renamer for various possible names
 
         if "site_id" not in expr_data.columns:
-            if "sitename2" in expr_data:
-                site_id = (
-                    expr_data[["sitename2", "ENSP", "fifteenmer"]]
-                    .fillna("")
-                    .agg("_".join, axis=1)
-                )
-            elif "sitename" in expr_data:  #
-                site_id = (
-                    expr_data[["sitename", "ENSP", "fifteenmer"]]
-                    .fillna("")
-                    .agg("_".join, axis=1)
-                )
-            site_id = make_unique(site_id)
-            expr_data["site_id"] = site_id
+            expr_data = reduce.make_site_id(expr_data)
 
         expr_data = expr_data.set_index("site_id")
 
         # Filter metadata rows corresponding to the current expression file
         file_metadata = metadata[metadata["expr_file"] == expr_file]
+
         assert file_metadata["expr_col"].unique().shape[0] == len(file_metadata)
         mapper = file_metadata[["name", "expr_col"]].set_index("expr_col").to_dict()
         name_mapper = mapper["name"]
@@ -604,6 +537,7 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
             if col in expr_data.columns:
                 expr_data[[col]] = expr_data[[col]].fillna(0)
                 expr_data[[col]] = expr_data[[col]].astype(int)
+
         # to_exclude = {
         #     *expr_data.columns.difference(name_mapper.values()),
         #     "spectra",
@@ -635,7 +569,6 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
         rdesc = expr_data[rdesc_cols]
         # if combined_rdesc is None:
         #     combined_rdesc = rdesc
-        # import ipdb; ipdb.set_trace()
         # combined_rdesc = combined_rdesc.join(rdesc)
 
         processed_data[os.path.basename(expr_file)] = {"emat": emat, "rdesc": rdesc}
@@ -666,6 +599,11 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
         raise ValueError()
 
     combined_rdesc = combined_rdesc.loc[combined_emat.index]
+
+    for col in ("taxon",):
+        if col not in combined_rdesc:
+            continue
+        combined_rdesc[col] = combined_rdesc[col].astype(str)
 
     # combined_df = pd.concat(processed_data['emat'].values(), axis=1)
     # combined_rdesc = pd.concat(processed_data['rdesc'].values(), axis=1)
@@ -700,8 +638,21 @@ def merge_metadata(metadata: pd.DataFrame, filepath="siteinfo_combined"):
     # if rdesc_cols:
     #     rdesc = combined_df[list(rdesc_cols)]
 
-
     cdesc = metadata.loc[combined_emat.columns]
+
+    # subselect before writing gct
+    if taxon:
+        if "taxon" not in combined_rdesc:
+            raise ValueError("No taxon info available")
+        combined_rdesc = combined_rdesc[combined_rdesc.taxon == taxon]
+
+    combined_emat = combined_emat.loc[combined_rdesc.index]
+
+    if make_nr:
+        subsel = reduce.make_nr(combined_rdesc, **kwargs)
+        combined_rdesc = combined_rdesc.loc[subsel.index]
+        combined_emat = combined_emat.loc[subsel.index]
+
     write_gct(combined_emat, cdesc=cdesc, rdesc=combined_rdesc, filename=filepath)
 
     combined_df = combined_rdesc.join(combined_emat)
@@ -733,7 +684,7 @@ def write_gct(emat, cdesc, rdesc=None, filename="siteinfo_combined"):
         rdesc["rdesc"] = rdesc.index
 
     # Prepare the header lines
-    header_lines = [
+    header_lines = [  # import ipdb; ipdb.set_trace()
         "#1.3",
         f"{num_rows}\t{num_cols}\t{rdesc.shape[1]}\t{cdesc.shape[1]}",
     ]
@@ -771,7 +722,6 @@ def write_gct(emat, cdesc, rdesc=None, filename="siteinfo_combined"):
             f.write(row_str + "\n")
 
 
-
 def load_and_validate_files(psm_path, fasta_path, uniprot_check):
 
     # try load phosphositeplus fasta
@@ -782,6 +732,7 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     # df = io.read_psm_file(psm_path)
 
     # fasta_data = Fasta(fasta_path)
+    from . import io_psm
 
     with ThreadPoolExecutor(
         max_workers=3
@@ -789,8 +740,11 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
         # need to time test this with larger files
         # Submit the function to the executor
         psp_future = executor.submit(read_psite_fasta)
-        df_future = executor.submit(read_psm_file, psm_path)
-        fasta_future = executor.submit(partial(lambda x: Fasta(x, key_function=lambda x: x.split(" ")[0])), fasta_path)
+        df_future = executor.submit(io_psm.read_psm_file, psm_path)
+        fasta_future = executor.submit(
+            partial(lambda x: Fasta(x, key_function=lambda x: x.split(" ")[0])),
+            fasta_path,
+        )
 
         fasta_data = fasta_future.result()
         #
@@ -806,7 +760,7 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     protein_id_mappings = fast_token_match(protein_id_vals, fasta_data.keys())
     if set(df.protein) - set(protein_id_mappings.keys()):
         raise ValueError("this is not supposed to happen")
-    df['protein'] = df.protein.map(protein_id_mappings)
+    df["protein"] = df.protein.map(protein_id_mappings)
 
     if fa_psp_ref:
         logger.info("FASTA data loaded successfully.")
@@ -823,9 +777,9 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     return df, fasta_data, fa_psp_ref  #
 
 
-
-
-def fast_token_match(protein_ids, fasta_headers, fullname_col="fullname", min_score=1, tokenizer=None):
+def fast_token_match(
+    protein_ids, fasta_headers, fullname_col="fullname", min_score=1, tokenizer=None
+):
     """
     Universal fast token-based matching between protein_ids and FASTA headers using a sparse matrix.
     Returns a DataFrame: protein_id, best_fasta_fullname, overlap_score.
@@ -835,8 +789,10 @@ def fast_token_match(protein_ids, fasta_headers, fullname_col="fullname", min_sc
     """
     import numpy as np
     from scipy.sparse import csr_matrix
+
     def _tokenizer(x):
-        return set(x.replace('-', '|').replace('_', '|').lower().split('|'))
+        return set(x.replace("-", "|").replace("_", "|").lower().split("|"))
+
     if tokenizer is None:
         tokenizer = _tokenizer
 
@@ -880,20 +836,26 @@ def fast_token_match(protein_ids, fasta_headers, fullname_col="fullname", min_sc
     # matched_fasta = np.array(fasta_headers)[best_idx]
     matched_fasta = np.array(list(fasta_headers))[best_idx]
 
-    result = pd.DataFrame({
-        "protein_id": protein_ids,
-        "best_fasta_fullname": matched_fasta,#.flaten(),
-        "overlap_score": best_score,#.flatten()
-    })
+    result = pd.DataFrame(
+        {
+            "protein_id": protein_ids,
+            "best_fasta_fullname": matched_fasta,  # .flaten(),
+            "overlap_score": best_score,  # .flatten()
+        }
+    )
 
     # Optional: filter out weak matches
     # if min_score > 1:
     lowmatches = result[result["overlap_score"] < min_score]
     if len(lowmatches) > 0:
         logger.warning(f"some bad matches between protein column and fasta header")
-        result.loc[lowmatches.index, "best_fasta_fullname"] = result.loc[lowmatches.index, "protein_id"]
+        result.loc[lowmatches.index, "best_fasta_fullname"] = result.loc[
+            lowmatches.index, "protein_id"
+        ]
 
-    res_dict = result.set_index("protein_id")['best_fasta_fullname'].to_dict()
+    res_dict = result.set_index("protein_id")["best_fasta_fullname"].to_dict()
 
     return res_dict
 
+
+from .io_psm import *

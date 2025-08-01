@@ -5,14 +5,14 @@ from io import StringIO
 from pathlib import Path
 import pytest
 from click.testing import CliRunner
-import site_annotate.io
+from site_annotate.io import io
 from pytest_mock import MockerFixture
 
 
 def test_read_psm_file():
     psm_file = Path(__file__).parent.parent / "testdata/psm.tsv"
     print(os.path.abspath(psm_file))
-    df = site_annotate.io.read_psm_file(psm_file)
+    df = io.read_psm_file(psm_file)
 
     # assert df.shape == (3, 3)
     # assert df.columns.tolist() == ["peptide", "protein", "score"]
@@ -36,7 +36,7 @@ def mock_fasta_file():
 
 
 def test_get_isoform_hierarchy():
-    df = site_annotate.io.get_isoform_hierarchy()
+    df = io.get_isoform_hierarchy()
     assert df is not None
     assert "gene_id" in df.columns
     assert "protein_id" in df.columns
@@ -46,7 +46,7 @@ def test_get_isoform_hierarchy():
 
 def test_read_sequence_file_to_dataframe(mock_fasta_file, mocker):
     mocker.patch("builtins.open", return_value=mock_fasta_file)
-    df = site_annotate.io.read_sequence_file_to_dataframe("dummy_path.fasta", "fasta")
+    df = io.read_sequence_file_to_dataframe("dummy_path.fasta", "fasta")
 
     assert not df.empty
     assert len(df) == 2
@@ -57,7 +57,7 @@ def test_read_sequence_file_to_dataframe(mock_fasta_file, mocker):
 
 def test_extract_info_from_header():
     header = "ENSP|ENSMUSP00000022222|ENST|ENSMUST00000022222|ENSG|ENSMUSG00000021709|geneid|59079|taxon|10090|symbol|Erbin|Erbin"
-    result = site_annotate.io.extract_info_from_header(header)
+    result = io.extract_info_from_header(header)
 
     assert isinstance(result, dict)
     assert result == {
@@ -73,7 +73,7 @@ def test_extract_info_from_header():
 def test_read_fasta(mock_fasta_file, mocker: MockerFixture):
     mocker.patch("builtins.open", return_value=mock_fasta_file)
 
-    df = site_annotate.io.read_fasta("dummy_path.fasta")
+    df = io.read_fasta("dummy_path.fasta")
 
     assert not df.empty
     # assert len(df) == 2
@@ -86,7 +86,7 @@ def test_read_fasta_testdata():
     fasta_file = Path(__file__).parent.parent / "testdata/test.fa"
     if not fasta_file.exists():
         pytest.skip("Test data not found")
-    df = site_annotate.io.read_fasta(fasta_file)
+    df = io.read_fasta(fasta_file)
     assert "id" in df.columns
     assert "sequence" in df.columns
     assert "ENSP" in df.columns
@@ -107,7 +107,7 @@ def test_explode_mapped_proteins_testdata():
         }
     )
 
-    df_new = site_annotate.io.prepare_psm_file(df)
+    df_new = io.prepare_psm_file(df)
     assert all(df_new.protein == df_new.mapped_proteins2)
 
     query = df[["spectrum", "peptide", "modified_peptide", "protein"]].value_counts()
@@ -122,7 +122,7 @@ def test_explode_mapped_proteins_realdata():
     )  # the names have already been cleaned with janitor
 
     df = pd.read_csv(f, sep="\t")
-    df = site_annotate.io.prepare_psm_file(df)
+    df = io.prepare_psm_file(df)
 
     query = df[["spectrum", "peptide", "modified_peptide", "protein"]].value_counts()
     assert all(query == 1)
