@@ -1,0 +1,13 @@
+{"timestamp":"2025-09-24T11:20:49-05:00","event":"repo_scan","details":"Reviewed repository layout and noted recent cache updates under R/cache.R and supporting scripts."}
+{"timestamp":"2025-09-24T11:20:49-05:00","event":"test_run","details":"Executed pytest to gauge current state; observed failures in isoform integration test and mapper unit test due to missing PSM helper export and offline UniProt lookup."}
+{"timestamp":"2025-09-24T11:20:49-05:00","event":"python_fix","details":"Restored prepare_psm_file/read_psm_file exports via site_annotate.io package init for backwards compatibility."}
+{"timestamp":"2025-09-24T11:20:49-05:00","event":"python_fix","details":"Hardened mapper.add_uniprot cache path to tolerate sandboxed environments and normalise legacy cache rows."}
+{"timestamp":"2025-09-24T11:20:49-05:00","event":"test_run","details":"Re-ran targeted and full pytest suites; all 37 tests now pass."}
+{"timestamp":"2025-09-24T11:20:49-05:00","event":"next_focus","details":"Transitioning attention to R tooling, starting with cache layer and run pipeline integration."}
+{"timestamp":"2025-09-24T11:33:21-05:00","event":"r_tests","details":"Executed bash test.sh to exercise existing R unit suites; initial cache tests revealed gaps prompting further work."}
+{"timestamp":"2025-09-24T11:33:21-05:00","event":"r_cache_updates","details":"Parameterised cache DB/RDS locations via options hook, added RDS path normalisation, and created targeted testthat coverage for cache hits, RDS thresholding, and DB fallback."}
+{"timestamp":"2025-09-24T11:33:21-05:00","event":"r_tests","details":"Re-ran bash test.sh and full pytest suite; all R and Python tests pass with new cache coverage."}
+{"timestamp":"2025-09-24T11:55:43-05:00","event":"r_cache_cleanup","details":"Refined cache DB helpers to manage connections via NA-aware close flags and ensured every code path disconnects, eliminating the lingering dbDisconnect warning."}
+{"timestamp":"2025-09-24T11:55:43-05:00","event":"tests","details":"Re-ran bash test.sh and pytest; all R and Python suites remain green without connection warnings."}
+{"timestamp":"2025-09-24T13:32:28-05:00","event":"python_tests","details":"Added pytest module to ensure key site_annotate packages import cleanly and validate io re-exports."}
+{"timestamp":"2025-09-24T13:32:28-05:00","event":"pytest","details":"Expanded suite now runs 49 tests after new coverage."}

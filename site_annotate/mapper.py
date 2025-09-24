@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 import re
 import pandas as pd
-from mygene import MyGeneInfo
 import json
 import sqlitedict
+from mygene import MyGeneInfo
 
 from site_annotate import io_external
 
@@ -52,16 +52,35 @@ def find_ENSP(protein):
 
 
 def fetch_uniprot_info_from_db(db, ENSP_values):
-    return {ENSP: db[ENSP] for ENSP in ENSP_values if ENSP in db}
+    results = {}
+    for ENSP in ENSP_values:
+        if ENSP not in db:
+            continue
+
+        record = db[ENSP]
+        if isinstance(record, dict) and ENSP in record and "uniprot" not in record:
+            # legacy layout where entry is nested under the ENSP key
+            record = record[ENSP]
+
+        results[ENSP] = record
+
+    return results
 
 
 def fetch_uniprot_info_online(missing_ENSP):
+    if not missing_ENSP:
+        return []
+
     mg = MyGeneInfo()
-    return mg.querymany(
-        missing_ENSP,
-        scopes="ensembl.protein",
-        fields="uniprot.Swiss-Prot,uniprot.TrEMBL,name,symbol,other_names,entrezgene,taxid",
-    )
+    try:
+        return mg.querymany(
+            missing_ENSP,
+            scopes="ensembl.protein",
+            fields="uniprot.Swiss-Prot,uniprot.TrEMBL,name,symbol,other_names,entrezgene,taxid",
+        )
+    except Exception as exc:  # pragma: no cover - defensive network fallback
+        logger.warning("Failed to fetch UniProt info online: %s", exc)
+        return []
 
 
 def resolve_multi_uniprot(uniprot_list) -> str:
@@ -121,21 +140,29 @@ def add_uniprot(df):
             else df
         )
 
-    db = get_db()
     proteins_ENSP = {
         protein: find_ENSP(protein) for protein in df["protein"].dropna().unique()
     }
-    final_items = fetch_uniprot_info_from_db(db, proteins_ENSP.values())
 
-    missing_ENSP = set(proteins_ENSP.values()) - set(final_items.keys())
-    # missing_ENSP = list(filter(missing_ENSP, None))
-    missing_ENSP = [x for x in missing_ENSP if x is not None]
+    ensps = [val for val in proteins_ENSP.values() if val is not None]
+    final_items = {}
 
-    if missing_ENSP:
-        # import ipdb; ipdb.set_trace()
-        online_info = fetch_uniprot_info_online(missing_ENSP)
-        update_db(db, online_info)
-        final_items.update({item["query"]: item for item in online_info})
+    if ensps:
+        with get_db() as db:
+            final_items = fetch_uniprot_info_from_db(db, ensps)
+
+            missing_ENSP = sorted(set(ensps) - set(final_items.keys()))
+            if missing_ENSP:
+                online_info = fetch_uniprot_info_online(missing_ENSP)
+                if online_info:
+                    update_db(db, online_info)
+                    final_items.update(
+                        {
+                            item["query"]: item
+                            for item in online_info
+                            if isinstance(item, dict) and "query" in item
+                        }
+                    )
 
     # xs = [ x for x in final_items.values() if isinstance(x.get('uniprot', {}).get('Swiss-Prot'), list) ]
 
