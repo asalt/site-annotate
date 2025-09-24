@@ -26,8 +26,8 @@ within the config file as well.
 
 ## config
 
-a base config file can be generated with:
-`site-annotate run`
+a base toml config file can be generated with:
+`site-annotate get-config`
 
 # Running
 
@@ -63,7 +63,7 @@ so `data-dir` may look like:
 `
 the gct file will be saved within the same data directory.
 
-TODO: add normalization options 
+TODO: describe normalization options
 
 ### Reporting
 
