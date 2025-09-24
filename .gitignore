@@ -2,6 +2,10 @@
 data/*
 data/phosphositeplus/*
 
+*.dot
+*.svg
+*.png
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
