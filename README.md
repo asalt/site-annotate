@@ -70,3 +70,13 @@ TODO: describe normalization options
 
 `site-annotate report -m metadata.tsv -c config.toml --gct /path/to/gct/file`
 
+
+# Developer notes
+
+Please keep a running JSONL worklog in `dev_log.jsonl` whenever you modify
+the repository.  Each entry should be a single line JSON object containing at
+least a timestamp (ISO-8601 preferred), an `event` label, and a short
+`details` description of the noteworthy action you performed.  Append new
+entries to the file rather than rewriting existing history.  This log is used
+by downstream agents to understand recent context, so try to update it after
+commits or other significant steps.
