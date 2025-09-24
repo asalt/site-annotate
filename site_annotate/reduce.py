@@ -4,38 +4,59 @@ import re
 from tokenize import group
 import pandas as pd
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
 import numpy as np
 
 from tqdm import tqdm
 
+
 from .constants import VALID_MODI_COLS
 from . import log
-from . import io
 
 logger = log.get_logger(__file__)
 
 
-#tmt_pat = re.compile(r".*TMT_(\d+)_intensity")
+# tmt_pat = re.compile(r".*TMT_(\d+)_intensity")
 
 
-def make_nr(df_reduced) -> pd.DataFrame:
-    #  not useable yet
-    logger.info("makenr")
+# Ensure uniqueness by appending .1, .2, etc., to duplicates
+def make_unique(series):
+    seen = {}
+    unique = []
+    for value in series:
+        if value not in seen:
+            seen[value] = 0
+            unique.append(value)
+        else:
+            seen[value] += 1
+            unique.append(f"{value}.{seen[value]}")
+    return unique
 
-    mapping = io.get_isoform_hierarchy()
 
-    df = pd.merge(
-        df_reduced,
-        mapping[["primary_select", "secondary_select", "protein_id"]],
-        left_on="ENSP",
-        right_on="protein_id",
-        how="left",
-    )
+def make_site_id(df):
+    if "sitename2" in df:
+        site_id = (
+            df[["sitename2", "ENSP", "fifteenmer"]].fillna("").agg("_".join, axis=1)
+        )
+    elif "sitename" in df:  #
+        site_id = (
+            df[["sitename", "ENSP", "fifteenmer"]].fillna("").agg("_".join, axis=1)
+        )
+    site_id = make_unique(site_id)
+    df["site_id"] = site_id
+    return df
 
-    if df_reduced.shape[0] != df.shape[0]:
-        logger.error("merge failed, created more rows than started with")
 
+def group_map(groups, df, **kwargs):
+    res = list()
+    for group, idxs in tqdm(groups.items()):
+        d = condense_group(group, idxs, df)
+        res.append(d)
+    return res
+
+
+def get_id_cols(df):
     id_cols = [
         "fifteenmer",
         "ENSG",
@@ -43,39 +64,28 @@ def make_nr(df_reduced) -> pd.DataFrame:
         "geneid",
     ]  #'label']
     id_cols = [x for x in id_cols if x in df.columns]
+    return id_cols
 
-    def condense_group(group, idxs, df, id_cols=id_cols):
-        # idx = [0, 1]
-        sel = df.loc[idxs]
-        sel["protein"] = sel["protein"].fillna("")
-        proteins = str.join(", ", map(str, sel["protein"].tolist()))
-        aapos_list = str.join(", ", map(str, set(sel["position_absolut"].tolist())))
 
-        try:
-            primarysel = (
-                str.join(
-                    ",",
-                    (
-                        sel.apply(
-                            lambda x: (
-                                x["protein"] if x["primary_select"] == "Yes" else ""
-                            ),
-                            axis=1,
-                        )
-                    ),
-                ).strip(",")
-                or None
-            )
-        except Exception as e:
-            pass
+# def condense_group(group, idxs, df, id_cols=id_cols):
+def condense_group(group, idxs, df):
+    # idx = [0, 1]
 
-        secondarysel = (
+    id_cols = get_id_cols(df)
+
+    sel = df.loc[idxs]
+    sel["protein_id"] = sel["protein_id"].fillna("")
+    proteins = str.join(", ", map(str, sel["protein_id"].tolist()))
+    aapos_list = str.join(", ", map(str, set(sel["position_absolut"].tolist())))
+
+    try:
+        primarysel = (
             str.join(
                 ",",
                 (
                     sel.apply(
                         lambda x: (
-                            x["protein"] if x["secondary_select"] == "Yes" else ""
+                            x["protein_id"] if x["primary_select"] == "Yes" else ""
                         ),
                         axis=1,
                     )
@@ -83,94 +93,196 @@ def make_nr(df_reduced) -> pd.DataFrame:
             ).strip(",")
             or None
         )
-        #
-        uniquesel = None
+    except Exception as e:
+        pass
+
+    secondarysel = (
+        str.join(
+            ",",
+            (
+                sel.apply(
+                    lambda x: (
+                        x["protein_id"] if x["secondary_select"] == "Yes" else ""
+                    ),
+                    axis=1,
+                )
+            ),
+        ).strip(",")
+        or None
+    )
+    #
+    uniquesel = None
+    bestsel = None
+    if (
+        bool(primarysel) == False
+        and bool(secondarysel) == False
+        and proteins.count(",") == 0
+    ):
+        uniquesel = proteins
         bestsel = None
-        if (
-            bool(primarysel) == False
-            and bool(secondarysel) == False
-            and proteins.count(",") == 0
-        ):
-            uniquesel = proteins
-            bestsel = None
-        elif (
-            bool(primarysel) == False
-            and bool(secondarysel) == False
-            and proteins.count(",") > 0
-        ):
-            bestsel = sel.sort_values(by="protein_length", ascending=False).iloc[0][
-                "Protein"
-            ]
-            uniquesel = None
-
-        finalsel = None
-        reason = None
-        if bool(primarysel):
-            finalsel = primarysel
-            reason = "primary"
-        elif not bool(primarysel) and bool(secondarysel):
-            finalsel = secondarysel
-            reason = "secondary"
-        elif uniquesel is not None:
-            finalsel = uniquesel
-            reason = "not primary or secondary, only one choice"
-        elif bestsel is not None:
-            finalsel = bestsel
-            reason = "not primary or secondary, multiple choices, returning longest"
-
-        #
-
-        # str.join(", ", map(str, set(sel["Primary_select"].tolist())))
-        # make unique before making string
-        d = dict()
-        d["Protein_Accessions"] = proteins
-        d["AApos_List"] = aapos_list
-        d["Primary_select"] = primarysel or ""
-        d["Secondary_select"] = secondarysel or ""
-        d["Unique_select"] = uniquesel or ""
-        d["Best_select"] = bestsel or ""
-        d["Protein_Accession_Selected"] = finalsel
-        d["Reason_Selected"] = reason
-        for k, v in zip(id_cols, group):
-            d[k] = v
-
-        # add quant values
-        _cols = set(df.columns) - set(d.keys())
-        _cols = [
-            x
-            for x in _cols
-            if x not in ("AApos", "Protein", "Protein_id", "protein_length")
+    elif (
+        bool(primarysel) == False
+        and bool(secondarysel) == False
+        and proteins.count(",") > 0
+    ):
+        bestsel = sel.sort_values(by="ccds_length", ascending=False).iloc[0][
+            "protein_id"
         ]
-        # avoid some columns from the original table we do not want to add
-        # in fact the only columns we want to add are the ones that start with TMT_ (or something else if it isn't a TMT experiment)
+        uniquesel = None
 
-        for col in _cols:
-            d[col] = sel.iloc[0][col]
+    finalsel = None
+    reason = None
+    if bool(primarysel):
+        finalsel = primarysel
+        reason = "primary"
+    elif not bool(primarysel) and bool(secondarysel):
+        finalsel = secondarysel
+        reason = "secondary"
+    elif uniquesel is not None:
+        finalsel = uniquesel
+        reason = "not primary or secondary, only one choice"
+    elif bestsel is not None:
+        finalsel = bestsel
+        reason = "not primary or secondary, multiple choices, returning longest"
 
-        return d
+    #
 
+    # str.join(", ", map(str, set(sel["Primary_select"].tolist())))
+    # make unique before making string
+    d = dict()
+    d["Protein_Accessions"] = proteins
+    d["AApos_List"] = aapos_list
+    d["Primary_select"] = primarysel or ""
+    d["Secondary_select"] = secondarysel or ""
+    d["Unique_select"] = uniquesel or ""
+    d["Best_select"] = bestsel or ""
+    d["Protein_Accession_Selected"] = finalsel
+    d["Reason_Selected"] = reason
+    for k, v in zip(id_cols, group):
+        d[k] = v
+
+    # add rest of values
+    _cols = set(df.columns) - set(d.keys())
+    _cols = [
+        x for x in _cols if x not in ("AApos", "Protein", "Protein_id", "ccds_length")
+    ]
+    # avoid some columns from the original table we do not want to add
+    # in fact the only columns we want to add are the ones that start with TMT_ (or something else if it isn't a TMT experiment)
+
+    for col in _cols:
+        d[col] = sel.iloc[0][col]
+
+    return d
+
+
+def make_nr(df_reduced, cores=1) -> pd.DataFrame:
+
+    logger.info("makenr")
+
+    for col in ("ENSG", "ENSP"):
+        if col not in df_reduced.columns:
+            logger.warning(f"{col} not present, cannot make nr")
+            return df_reduced
+
+    from .io import io
+
+    mapping = io.get_isoform_hierarchy()
+
+    df = pd.merge(
+        df_reduced,
+        mapping[
+            [
+                "primary_select",
+                "secondary_select",
+                "protein_id",
+                "gene_id",
+                "ccds_length",
+            ]
+        ],
+        left_on=["ENSP", "ENSG"],
+        right_on=["protein_id", "gene_id"],
+        how="left",
+    )
+
+    if df_reduced.shape[0] != df.shape[0]:
+        logger.error("merge failed, created more rows than started with")
+
+    id_cols = get_id_cols(df)
     g = df.groupby(id_cols)
     groups = g.groups
+
+    batches = [df]
+    if cores > 1:
+        # batch and send to jobs
+        group_keys = list(groups)
+        batch_size = len(group_keys) // cores
+        idxs = [x for x in range(0, len(group_keys), batch_size)]
+        idxs[-1] = idxs[-1] + (len(group_keys) - idxs[-1])
+        group_batches = [group_keys[a:b] for a, b in zip(idxs[0:-1], idxs[1:])]
+        # indices = [[*g.indices[grp] for grp in group_batch] for group_batch in group_batches]
+        indices = [
+            [i for grp in group_batch for i in g.indices[grp]]
+            for group_batch in group_batches
+        ]
+        batches = [df.loc[ixs] for ixs in indices]
+
     res = list()
-    for group, idxs in groups.items():
-        d = condense_group(group, idxs, df, id_cols=id_cols)
-        res.append(d)
+
+    # for group, idxs in groups.items():
+    #     d = condense_group(group, idxs, df)
+    #     res.append(d)
+
+    # res_df = pd.DataFrame.from_dict(res)
+    # res_df = make_site_id(res_df)
+    # res_df.index = res_df['site_id']
+
+    # return res_df
+
+    with ProcessPoolExecutor(max_workers=cores) as executor:
+        futures = {
+            executor.submit(group_map, subdf.groupby(id_cols).groups, subdf)
+            for subdf in batches
+        }
+
+        for future in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            mininterval=0.4,
+            smoothing=0.1,
+        ):
+            result = future.result()
+            res.extend(result)
+            # try:
+            #     result = future.result()
+            #     res.extend(result)
+            # except Exception as e:
+            #     # print(f"An error occurred: {e}")
+            #     pass
+
+    res = list(filter(None, res))
+
+    res_df = pd.DataFrame.from_dict(res)
+    res_df = make_site_id(res_df)
+    res_df.index = res_df["site_id"]
+
+    return res_df
 
 
 def _reduce_sites(df):
 
     common_cols = [
         "protein",
+        "protein_id",
         "uniprot_id",
         "ENSP",
-        #"mapped_proteins",
+        # "mapped_proteins",
     ]
 
     # Group by 'fifteenmer' and other common columns
     groupby_cols = [
         "fifteenmer",
         "sitename",
-    ] + [x for x in common_cols if x in df.columns]
+    ] + [x for x in common_cols if x in df.columns and not df[x].isnull().all()]
 
     agg_dict2 = {
         "hyperscore": "max",
@@ -194,14 +306,16 @@ def _reduce_sites(df):
     # Summarize by calculating the sum of TMT intensities
     # agg1
     result1 = None
-    #if any([tmt_pat.match(col) for col in df.columns]):
+    # if any([tmt_pat.match(col) for col in df.columns]):
     if any("TMT" in x for x in df.columns):
         _agg_dict = {
-            col: "sum" for col in df.columns if "TMT_" in col and "intensity" in col and "ratio" not in col
+            col: "sum"
+            for col in df.columns
+            if "TMT_" in col and "intensity" in col and "ratio" not in col
         }
-        _agg_dict.update( {
-            col: "mean" for col in df.columns if "TMT_" in col and "ratio" in col})
-
+        _agg_dict.update(
+            {col: "mean" for col in df.columns if "TMT_" in col and "ratio" in col}
+        )
 
         # else:
         #     if 'intensity' not in df.columns:
@@ -222,6 +336,7 @@ def _reduce_sites(df):
     result2_1 = g.agg({"spectrum": lambda x: len(set(x))})
     result2_1 = result2_1.rename(columns={"spectrum": "nspectra"})
     result2 = result2.join(result2_1)
+    import pdb
 
     # agg 3
     result3 = g.agg({"intensity": ["sum", "max"]})
@@ -229,11 +344,14 @@ def _reduce_sites(df):
 
     # result = pd.concat([result1, result2, result3], axis=1)
     result = pd.concat(
-            filter(lambda x: x is not None, [
-            result2,
-            result3,
-            result1,
-        ]),
+        filter(
+            lambda x: x is not None,
+            [
+                result2,
+                result3,
+                result1,
+            ],
+        ),
         axis=1,
     )
 

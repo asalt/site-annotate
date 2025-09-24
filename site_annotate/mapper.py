@@ -171,7 +171,7 @@ def add_annotations(data):
         dfm = dfm[[x for x in [*psp_info.columns, *df.columns] if x in dfm.columns]]
         outdata[k] = dfm
         if not len(df) == len(dfm):
-            print(f"length of df is ",  len(df))
+            print(f"length of df is ", len(df))
             print(f"length of dfm is ", len(dfm))
             # This does not crash if not true, uses the overlap
             # this is by design
@@ -266,7 +266,7 @@ def _xxadd_uniprot(df):
 
 
 def extract_keyvals_pipedsep(df, col="protein"):
-    from .io import extract_info_from_header
+    from .io.io import extract_info_from_header
 
     if col not in df.columns:
         return

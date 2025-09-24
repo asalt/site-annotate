@@ -115,6 +115,8 @@ load_config <- function(file_path, root_dir = NULL) {
   # }
 
 
+  config$params$filter$nonzero_subgroup <- is_null_config(config$params$filter$nonzero_subgroup)
+  config$params$norm$batch <- is_null_config(config$params$norm$batch)
 
   config$params$limma$formula <- is_null_config(config$params$limma$formula)
   if (!is.null(config$params$limma$formula)) {
@@ -260,6 +262,10 @@ read_genelist_file <- function(file_path,
     df <- df %>% arrange(!!sym(possible_col_for_sort))
   }
 
+  return(df)
+
+}
+
   # possible_col_for_facet <- maybe_match_arg(colnames(df), possible_contrast_cols, several.ok = TRUE)
   # if (!is.null(possible_col_for_facet)) {
   #   if (length(possible_col_for_facet) > 1) possible_col_for_facet <- possible_col_for_facet[1]
@@ -269,10 +275,6 @@ read_genelist_file <- function(file_path,
   #   ) %>% set_names(vals)
   # }
 
-  return(df)
-
-
-}
 
 
 create_gct_from_datal <- function(datal){
