@@ -18,16 +18,17 @@ hide_zero <- function(x) {
 }
 
 
-draw_and_save_heatmap <- function(ht_draw_code, outf, gct_z_subset, width=NULL, height=NULL) {
+draw_and_save_heatmap <- function(ht_draw_code, outf, gct=NULL, width=NULL, height=NULL) {
   # Calculate dimensions
-  if (is.null(width)){
-    width <- 6.4 + (ncol(gct_z_subset@mat) * 0.26)
+  if (is.null(width) && !is.null(gct) ){
+    width <- 6.4 + (ncol(gct@mat) * 0.26)
   }
-  if (is.null(height)){
+  if (is.null(height) && !is.null(gct) ){
     height <- 7.8
   }
 
   message(paste0("Drawing heatmap: ", outf))
+  message(paste0("width x height : ", width, " x ", height))
   tryCatch(
     {
       cairo_pdf(outf, width = width, height = height)
@@ -56,6 +57,15 @@ prepare_heatmap_output_path <- function(
     outdir <- file.path(outdir, subdirs)
     if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
   }
+
+  if (!is.null(prefix) && !is.character(prefix)) {
+    stop("Prefix must be a character string.")
+  }
+
+  if(is.null(prefix)) {
+    prefix <- ""
+  }
+
 
   # Build the filename
   filename <- make.names(
@@ -191,7 +201,7 @@ sort_by_number_after_underscore <- function(strings) {
 # Returns:
 #   Saves heatmap PDFs to the specified output directory.
 #   Throws errors if required packages are missing or input data is invalid.
-
+# not using this anymore
 .do_plot_example <- function(df, comp_name, n = 60, datal, meta, OUTDIR, util_tools) {
   # this is to be refactored. df is a dataframe of stat results. we should have a gct object to make the data loading easier
   # Load required libraries
@@ -290,7 +300,7 @@ sort_by_number_after_underscore <- function(strings) {
     nchar(.mat$ms_lit),
     na.rm = TRUE
   )
-  nchar_max <- nchar_max %||% 20
+  nchar_max <- nchar_max %||% 16
 
   .annot_font_size <- 7
   anno_width <- unit((nchar_max + 1) * (.annot_font_size / 12), "picas")
@@ -300,14 +310,14 @@ sort_by_number_after_underscore <- function(strings) {
     lt_lit = anno_text(
       hide_zero(.mat$lt_lit) %>% str_wrap(width = 10, whitespace_only = FALSE),
       show_name = TRUE,
-      gp = gpar(fontsize = .annot_font_size),
+      gp = gpar(fontsize = .annot_font_size, fontface = "bold"),
       location = unit(0.5, "npc"),
-      just = "centre"
+      just = "left"
     ),
     ms_lit = anno_text(
       hide_zero(.mat$ms_lit) %>% str_wrap(width = 10, whitespace_only = FALSE),
       show_name = TRUE,
-      gp = gpar(fontsize = .annot_font_size),
+      gp = gpar(fontsize = .annot_font_size, fontface = "bold"),
       location = unit(0.5, "npc"),
       just = "center"
     ),
@@ -332,7 +342,7 @@ sort_by_number_after_underscore <- function(strings) {
     height = unit(nrow(.ht_mat) * 0.24, "in"),
     column_split = .meta$group,
     row_labels = .mat$sitename,
-    row_names_gp = gpar(fontsize = 6),
+    row_names_gp = gpar(fontsize = 6, fontface = "bold"),
     column_names_side = "top",
     heatmap_legend_param = list(title = "zscore"),
     column_title = comp_name,
@@ -427,7 +437,7 @@ sort_by_number_after_underscore <- function(strings) {
     width = unit(ncol(.ht_mat2) * 0.2, "in"),
     height = unit(nrow(.ht_mat2) * 0.24, "in"),
     row_labels = .mat2$sitename,
-    row_names_gp = gpar(fontsize = 6),
+    row_names_gp = gpar(fontsize = 6, fontface = "bold"),
     column_names_side = "top",
     heatmap_legend_param = list(title = "zscore"),
     column_title = comp_name,
@@ -515,6 +525,8 @@ make_heatmap_fromgct <- function(
     meta_to_include = NULL, # if NULL uses all
     meta_to_exclude = NULL, # if NULL filters nothing out
     do_condense_groups = TRUE,
+    heatmap_colorbar_bounds = NULL,
+    render_by_magick = TRUE,
     ...) {
 
   print("making heatmap from gct")
@@ -550,9 +562,11 @@ make_heatmap_fromgct <- function(
   }
 
 
+  gct_index_ordered <- rownames(gct@mat)
   rdesc <- gct %>%
     cmapR::melt_gct(keep_cdesc = FALSE, suffixes = c(".x", ".y")) %>%
     distinct(id.x, .keep_all = TRUE)
+  rdesc <- rdesc[gct_index_ordered, ]
   if ("ms_lit" %in% colnames(rdesc) && "lt_lit" %in% colnames(rdesc)) {
     rdesc <- rdesc %>%
       dplyr::select(id.x, ms_lit, lt_lit, sitename) %>% # distinct() %>%
@@ -567,7 +581,7 @@ make_heatmap_fromgct <- function(
     rdesc$sitename <- rdesc$id.x
   }
   # note the default call of data.frame has check.names = TRUE
-  mat_data <- as.data.frame(gct@mat)[rdesc$id.x, ] %>%
+  mat_data <- as.data.frame(gct@mat) %>%
     rownames_to_column(var = "id.x") %>%
     left_join(rdesc %>% dplyr::select(any_of(c("sitename", "sitename2", "ms_lit", "lt_lit", "id.x"))),
                by = "id.x")
@@ -606,7 +620,7 @@ make_heatmap_fromgct <- function(
   row_annotations <- NULL
   nchar_max <- 25
   # browser()
-  anno_width <- unit((nchar_max + 1) * (.annot_font_size / 12), "picas")
+  anno_width <- unit((nchar_max + 1) * (.annot_font_size / 12) * .25, "picas")
   if (include_row_annotations) {
     nchar_max <- max(
       nchar(mat_data$lt_lit),
@@ -617,14 +631,14 @@ make_heatmap_fromgct <- function(
       lt_lit = anno_text(
         hide_zero(mat_data$lt_lit) %>% str_wrap(width = 10, whitespace_only = FALSE),
         show_name = TRUE,
-        gp = gpar(fontsize = .annot_font_size),
+        gp = gpar(fontsize = .annot_font_size, fontface = "bold"),
         location = unit(0.5, "npc"),
         just = "centre"
       ),
       ms_lit = anno_text(
         hide_zero(mat_data$ms_lit) %>% str_wrap(width = 10, whitespace_only = FALSE),
         show_name = TRUE,
-        gp = gpar(fontsize = .annot_font_size),
+        gp = gpar(fontsize = .annot_font_size, fontface = "bold"),
         location = unit(0.5, "npc"),
         just = "center"
       ),
@@ -634,7 +648,7 @@ make_heatmap_fromgct <- function(
       annotation_name_side = "bottom",
       border = TRUE,
       show_annotation_name = TRUE,
-      annotation_name_gp = gpar(fontsize = 8, size = 8)
+      annotation_name_gp = gpar(fontsize = 8, size = 8, fontface = "bold")
     )
   }
 
@@ -701,8 +715,29 @@ make_heatmap_fromgct <- function(
   print("***")
   print(cut_by)
 
+
+
+  quantiles <- mat_data[, colnames(gct@mat)] %>%
+      quantile(
+               probs = seq(0, 1, 0.025),
+        na.rm = TRUE
+    )
+  minval <- quantiles[["2.5%"]]
+  maxval <- quantiles[["97.5%"]]
+  if (!is.null(heatmap_colorbar_bounds)){ # manual override if specified
+    minval <- heatmap_colorbar_bounds[[1]]
+    maxval <- heatmap_colorbar_bounds[[2]]
+    }
+    # col <- colorRamp2(c(minval, 0, maxval), c("blue", "white", "red"))
+  color_low <- "blue" 
+  color_mid <- "white"
+  color_high <- "red"
+  col <- colorRamp2(c(minval, 0, maxval), c(color_low, color_mid, color_high))
+
+
+
   ht <- ComplexHeatmap::Heatmap(
-    mat_data[, colnames(gct@mat)],
+    as.matrix(mat_data[, colnames(gct@mat)]),
     width = heatmap_matrix_width,
     height = heatmap_matrix_height,
     # TODO use z_score_withna or other custom func for handling nas when scaling
@@ -711,6 +746,7 @@ make_heatmap_fromgct <- function(
     cluster_rows = cluster_rows,
     cluster_columns = cluster_columns,
     #
+    col = col,
 
     row_title = row_title,
     # column_title = column_title,
@@ -722,7 +758,7 @@ make_heatmap_fromgct <- function(
     top_annotation = column_annotations,
     right_annotation = row_annotations,
     heatmap_legend_param = heatmap_legend_param,
-    row_names_gp = grid::gpar(fontsize = 7.4),
+    row_names_gp = grid::gpar(fontsize = 7.4, fontface = "bold"),
     column_names_gp = grid::gpar(fontsize = 7.4),
     cluster_column_slices = FALSE,
     column_names_side = "top",
@@ -746,19 +782,26 @@ make_heatmap_fromgct <- function(
   # log_msg(debug = paste0("save func: ", class(save_func) %>% as.character()))
   # log_msg(debug = paste0("is null save func: ", is.null(save_func)))
 
-  height <- 4 + (nrow(mat_data) * .20)
-  width <- 8 + (ncol(mat_data) * .26)
 
   if (!is.null(save_func)) {
     # log_msg(debug = paste0("save func attrs before: "))
     # log_msg(debug = paste0(names(get_args(save_func)), "-", get_args(save_func)))
 
-    save_func <- make_partial(save_func, height = height, width = width)
+    height <- 4 + (nrow(mat_data) * .20) + (nrow(cmeta) * .2)
+    width <- 8 + (ncol(mat_data) * .26)
+
+    if (cluster_columns) height <- height + 3.2
+    # if (cluster_rows) width <- height + 3.2
+    print(paste0('width x height ', width, ' x ', height))
+
+    #save_func <- make_partial(save_func, height = height, width = width)
+    save_func <- purrr::partial(save_func, height = height, width = width)
 
     # log_msg(debug = paste0("save func attrs after: "))
     # log_msg(debug = paste0(names(get_args(save_func)), "-", get_args(save_func)))
 
-    save_func(plot_code = do_draw)
+    #save_func(plot_code = do_draw)
+    save_func(do_draw)
   }
 
 
