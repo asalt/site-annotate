@@ -288,6 +288,9 @@ run <- function(
 
   print(config)
 
+  z_score_flag <- config$heatmap$z_score %||% TRUE
+  z_score_by <- config$heatmap$z_score_by %||% config$heatmap$zscore_by %||% NULL
+
 
   if (is.null(gct_file)) {
     gct_file <- config$gct_file
@@ -316,7 +319,10 @@ run <- function(
   # ==========================================
 
   util_tools <- get_tool_env("utils")
-  gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$z_score_by) # %cached_by% rlang::hash(c(gct@mat, config$heatmap$z_score_by))
+  gct_z <- util_tools$scale_gct(gct,
+    group_by = z_score_by,
+    apply_z = z_score_flag
+  ) # %cached_by% rlang::hash(c(gct@mat, config$heatmap$z_score_by))
 
 
 
@@ -376,7 +382,11 @@ run <- function(
       # file_data = file_data
     )
 
-    gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by)
+    gct_z <- util_tools$scale_gct(
+      gct,
+      group_by = z_score_by,
+      apply_z = z_score_flag
+    )
 
     topTables %>% purrr::imap(~ { # second loop plot topdiff
       .table <- .x %>% arrange(desc(abs(t)))

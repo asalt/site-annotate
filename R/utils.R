@@ -224,9 +224,13 @@ normalize_gct <- function(gct, mednorm=TRUE, log_transform = FALSE) {
   return(newgct)
 }
 
-scale_gct <- function(gct, group_by = NULL) {
+scale_gct <- function(gct, group_by = NULL, apply_z = TRUE) {
   # log_msg(msg="zscoring gct file by row")
   # log_msg(msg=paste0("group_by is set to: ", group_by))
+  if (isFALSE(apply_z)) {
+    return(gct)
+  }
+
   if (!is.null(group_by) && group_by == FALSE) group_by <- NULL
   res <- gct %>%
     melt_gct() %>%

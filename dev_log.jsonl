@@ -23,3 +23,4 @@
 {"timestamp":"2025-09-24T16:00:41-05:00","event":"diann_probabilities","details":"Populated *_best_localization columns from DIANN site probabilities and kept fallback filtering from dropping every row."}
 {"timestamp":"2025-09-24T16:06:04-05:00","event":"diann_aliases","details":"Treat DIANN precursor_lib_index as the canonical spectrum id and surface *_best_localization probabilities from site occupancy strings."}
 {"timestamp":"2025-09-24T16:38:39-05:00","event":"multiprocessing","details":"Switched ProcessPoolExecutor to multiprocessing spawn context to avoid fork-in-multithread warnings."}
+{"timestamp":"2025-09-24T16:47:52-05:00","event":"heatmap_zscore","details":"Added config flag to skip heatmap z-scoring; scale_gct now honors apply_z."}
