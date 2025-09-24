@@ -8,10 +8,14 @@ do_pca <- function(gct,  scale = T, removeVar=0.1) {
   library(PCAtools)
 
   .mat <- mat(gct)
-  .mat[is.na(.mat)] <- min(.mat, na.rm = T)
+  #.mat[is.na(.mat)] <- min(.mat, na.rm = T)
+  .mat[is.na(.mat)] <- mean(.mat, na.rm = T)
   if ("sitename" %in% colnames(gct@rdesc)){
       rownames(.mat) <- gct@rdesc[rownames(.mat), "sitename"] %>% make.unique()
   }
+
+  .mat <- .mat[!duplicated(.mat), ]  # drop duplicates
+  
   pca_obj <- PCAtools::pca(
     .mat,
     metadata = gct@cdesc,
@@ -43,6 +47,12 @@ plot_biplot <- function(
   if (!is.logical(encircle) || length(encircle) != 1 || is.na(encircle)) {
     stop("`encircle` must be a single logical value (TRUE or FALSE). Received: ", encircle)
   }
+
+  if (!is.null(shape) && !is.null(pca_object$metadata) && shape %in% colnames(pca_object$metadata)) {
+      pca_object$metadata[[shape]] <- as.factor(pca_object$metadata[[shape]])
+  }
+
+
 
   vec <- paste0("PC", 1:top_pc)
   # vec <- c("PC1", "PC2", "PC3") # "PC4")
@@ -130,7 +140,7 @@ plot_biplot <- function(
             panel.grid.minor = element_blank()
           )
 
-        filename <- paste0(basename, "_", .x1, "_", .x2, ".pdf")
+        filename <- paste0(basename, "_", as.character(n_features), "_", .x1, "_", .x2, ".pdf")
         ggplot2::ggsave(filename, plt, width = fig_width, height = fig_height)
         return(plt)
       } # exit inner
@@ -206,16 +216,14 @@ make_heatmap_from_loadings <- function(
 
 
 
-  top_loadings <- get_top_loadings(pca_object, components = components, rangeRetain = 0.05, limit = Inf)
+  top_loadings <- get_top_loadings(pca_object, components = components, rangeRetain = 1.05, limit = Inf)
   # top_loadings returns a dataframe with rownames as features and a column called "var" that is equal to rownames(top_loadings)
   # and floats PC1, 2, 3 .. and boolean PC1_member, PC2_member, PC3_member, ... (member being within the top 5%)
-browser()
 
   if ("sitename" %in% colnames(gct_object@rdesc)){  # this needs to not be hardcoded or is not usable for other dtypes,  but is the case for heatmap too
     site_ids <- gct_object@rdesc %>% dplyr::filter(sitename %in% rownames(top_loadings))
   }
-
-  submat <- gsea_object %>% name_cleaner() %>% filter(pathway %in% rownames(top_loadings))
+  submat <- gct %>% filter(pathway %in% rownames(top_loadings))
 
   ra <- ComplexHeatmap::rowAnnotation(
     PC1 = top_loadings$PC1_member %>% as.character() %>% anno_simple(col = c("TRUE" = "black", "FALSE" = "white")),
@@ -237,8 +245,8 @@ browser()
   )
 
   top_loadings <- get_top_loadings(pca_object, components = components, rangeRetain = 1, limit = 5)
-  submat <- gsea_object %>% name_cleaner() %>% filter(pathway %in% rownames(top_loadings))
-  submat %<>% mutate(pathway = factor(pathway, levels = rownames(top_loadings), ordered=TRUE)) %>% arrange(pathway)
+  submat <- gct_object %>% filter(pathway %in% rownames(top_loadings))
+  # submat %<>% mutate(pathway = factor(pathway, levels = rownames(top_loadings), ordered=TRUE)) %>% arrange(pathway)
 
   ra <- ComplexHeatmap::rowAnnotation(
     PC1 = top_loadings$PC1_member %>% as.character() %>% anno_simple(col = c("TRUE" = "black", "FALSE" = "white")),
