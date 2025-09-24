@@ -11,3 +11,14 @@
 {"timestamp":"2025-09-24T11:55:43-05:00","event":"tests","details":"Re-ran bash test.sh and pytest; all R and Python suites remain green without connection warnings."}
 {"timestamp":"2025-09-24T13:32:28-05:00","event":"python_tests","details":"Added pytest module to ensure key site_annotate packages import cleanly and validate io re-exports."}
 {"timestamp":"2025-09-24T13:32:28-05:00","event":"pytest","details":"Expanded suite now runs 49 tests after new coverage."}
+{"timestamp":"2025-09-24T13:47:42-05:00","event":"diann_support","details":"Extended prepare_psm_file to map DIANN-style columns (sequence, protein_ids, precursor area) into the canonical PSM schema and normalise protein identifiers."}
+{"timestamp":"2025-09-24T13:47:42-05:00","event":"tests","details":"Expanded io tests with DIANN-like fixture; full pytest now covers 50 cases."}
+{"timestamp":"2025-09-24T14:06:46-05:00","event":"diann_probabilities","details":"Sanitized DIANN site occupancy strings, mapped UniMod identifiers to canonical modi columns, and verified oxidation/phospho coverage via new tests."}
+{"timestamp":"2025-09-24T14:19:59-05:00","event":"uniprot_fallback","details":"Updated mapper.add_uniprot to harvest UniProt IDs from DIANN Protein.Ids when offline, with regression coverage."}
+{"timestamp":"2025-09-24T14:37:56-05:00","event":"fasta_mapping","details":"Tightened FASTA protein alignment: normalised ENSP strings, dropped unmatched PSMs, and expanded UniMod/UniProt fallbacks."}
+{"timestamp":"2025-09-24T14:46:51-05:00","event":"fasta_uniprot_fallback","details":"load_and_validate_files now retries FASTA alignment via UniProt IDs before dropping rows, logging remaining misses."}
+{"timestamp":"2025-09-24T15:05:23-05:00","event":"fasta_mapping","details":"Reuse matched UniProt→FASTA relationships when unique, drop leftover outliers instead of crashing downstream."}
+{"timestamp":"2025-09-24T15:05:23-05:00","event":"modisite_guard","details":"create_15mer now yields None for out-of-bounds positions rather than raising."}
+{"timestamp":"2025-09-24T15:22:11-05:00","event":"fasta_synonyms","details":"Index FASTA headers by ENSP/ENST/ENSG/geneID/symbol and UniProt (when available) to recover unmatched proteins; expand DIANN rows when multiple matches exist."}
+{"timestamp":"2025-09-24T16:00:41-05:00","event":"diann_probabilities","details":"Populated *_best_localization columns from DIANN site probabilities and kept fallback filtering from dropping every row."}
+{"timestamp":"2025-09-24T16:06:04-05:00","event":"diann_aliases","details":"Treat DIANN precursor_lib_index as the canonical spectrum id and surface *_best_localization probabilities from site occupancy strings."}

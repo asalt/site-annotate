@@ -104,8 +104,7 @@ def create_15mer(sequence, position):  # ! position is 1 indexed
     try:
         reslist[7] = reslist[7].lower()
     except IndexError:
-        1+1
-        raise IndexError()
+        return None
     return "".join(reslist)
 
 
@@ -168,16 +167,23 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
     Returns:
     pd.DataFrame: The enhanced DataFrame with additional positional data.
     """
+    if res_df is None or res_df.empty:
+        return
 
+    # import ipdb; ipdb.set_trace()
     df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
     # df_positions["position_absolut"] = (
     # df_positions["position_relative"] + df_positions["protein_start"]
     # )
     orig_sequence = seqinfo["sequence"]
     # import ipdb; ipdb.set_trace()
-    df_positions["position_start"] = df_positions.apply(
-        lambda x: orig_sequence.find(x["peptide"]) + 1, axis=1
-    )
+    try:
+        df_positions["position_start"] = df_positions.apply(
+            lambda x: orig_sequence.find(x["peptide"]) + 1, axis=1
+        )
+    except ValueError:
+        import ipdb; ipdb.set_trace()
+        1+1
     df_positions["protein_start"] = df_positions.apply(
         lambda x: orig_sequence.find(x["peptide"]) + 1, axis=1
     )
@@ -318,6 +324,9 @@ def process_probability_and_filter(df_positions, col, cutoff=0.5, take_best=True
         ]
     else:
         _res = df_positions[(df_positions.prob > cutoff)]
+
+    if _res.empty:
+        return df_positions
 
     return _res
 
@@ -488,7 +497,7 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
 
         res_df = extract_and_transform_data(df, col)
         df_positions = enhance_dataframe(res_df, df, seqinfo)
-        if len(df_positions) == 0: # can happen different protein isoforms..?
+        if df_positions is None or len(df_positions) == 0: # can happen different protein isoforms or there's no modification of that type
             continue
 
         df_positions["modi_abbrev"] = modi_abbrev

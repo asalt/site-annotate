@@ -185,8 +185,12 @@ def validate_metadata(df: pd.DataFrame, default_runno=1, default_searchno=7):
 
     if "label" in df.columns:
         renamer = get_rename_dict(
-            df.label.unique(), protected=df.label.unique().tolist()
+            df.label.unique(), #protected=df.label.unique().tolist()
         )
+
+        if not renamer:
+            raise ValueError("Error trying to match columns")
+
 
         df["label"] = df["label"].map(renamer)
         df["label"] = df["label"].apply(convert_tmt_label)
@@ -650,8 +654,9 @@ def merge_metadata(
 
     if make_nr:
         subsel = reduce.make_nr(combined_rdesc, **kwargs)
-        combined_rdesc = combined_rdesc.loc[subsel.index]
-        combined_emat = combined_emat.loc[subsel.index]
+        combined_rdesc_subsel = combined_rdesc.loc[subsel.index]
+        combined_emat_subsel = combined_emat.loc[subsel.index]
+        write_gct(combined_emat_subsel, cdesc=cdesc, rdesc=combined_rdesc, filename=str(filepath)+"_nr")
 
     write_gct(combined_emat, cdesc=cdesc, rdesc=combined_rdesc, filename=filepath)
 
@@ -756,18 +761,94 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
 
         # logger.info(f"Loading {fasta_path}")
 
-    protein_id_vals = df.protein.unique()
-    protein_id_mappings = fast_token_match(protein_id_vals, fasta_data.keys())
-    if set(df.protein) - set(protein_id_mappings.keys()):
-        raise ValueError("this is not supposed to happen")
-    df["protein"] = df.protein.map(protein_id_mappings)
+    df = mapper.extract_keyvals_pipedsep(df)
+    df = mapper.add_uniprot(df)
+
+    fasta_keys = [str(k) for k in fasta_data.keys()]
+    fasta_df = pd.DataFrame({"protein": fasta_keys})
+    fasta_df = mapper.extract_keyvals_pipedsep(fasta_df)
+    fasta_df = mapper.add_uniprot(fasta_df)
+
+    fasta_token_index = mapper.build_fasta_token_index(fasta_df)
+    fasta_uniprot_index = mapper.build_fasta_uniprot_index(fasta_df)
+    enhanced_headers = mapper.build_fasta_synonym_headers(fasta_df)
+    header_lookup = dict(zip(enhanced_headers, fasta_keys))
+
+    protein_id_vals = df.protein.astype(str).unique()
+    protein_id_mappings, lowmatches = fast_token_match(protein_id_vals, enhanced_headers)
+
+    df["__fasta_key"] = df.protein.map(protein_id_mappings).map(header_lookup)
+
+    unmatched_mask = df["__fasta_key"].isna()
+    if unmatched_mask.any():
+        logger.info(
+            "Attempting UniProt-based FASTA mapping for %d proteins",
+            unmatched_mask.sum(),
+        )
+        snapshots = df.loc[~unmatched_mask & df["uniprot_id"].notna(), ["uniprot_id", "__fasta_key"]]
+        matched_uniprot = mapper.build_uniprot_to_fasta_map(snapshots)
+
+        rows_to_drop = []
+        rows_to_add = []
+
+        for idx in df.index[unmatched_mask]:
+            row = df.loc[idx]
+            candidates = set()
+
+            for col in ("ENSP", "ENST", "ENSG", "geneid", "symbol"):
+                if col in row and pd.notna(row[col]):
+                    for token in str(row[col]).split(";"):
+                        token = token.strip()
+                        if token:
+                            candidates.update(fasta_token_index.get(token, set()))
+
+            uni = row.get("uniprot_id")
+            if pd.notna(uni):
+                candidates.update(matched_uniprot.get(str(uni), set()))
+                candidates.update(fasta_uniprot_index.get(str(uni), set()))
+
+            if len(candidates) == 1:
+                df.at[idx, "__fasta_key"] = next(iter(candidates))
+            elif len(candidates) > 1:
+                rows_to_drop.append(idx)
+                for key in sorted(candidates):
+                    dup = row.copy()
+                    dup["__fasta_key"] = key
+                    rows_to_add.append(dup)
+
+        if rows_to_drop:
+            df = df.drop(index=rows_to_drop)
+        if rows_to_add:
+            df = pd.concat([df, pd.DataFrame(rows_to_add)], ignore_index=True)
+
+    else:
+        logger.info("Protein identifiers already match FASTA keys")
+
+    still_unmatched = df["__fasta_key"].isna()
+    if still_unmatched.any():
+        logger.warning(
+            "Dropping %d PSM rows that could not be aligned to provided FASTA",
+            still_unmatched.sum(),
+        )
+        df = df.loc[~still_unmatched].reset_index(drop=True)
+
+    df["protein"] = df.pop("__fasta_key")
+
+    lookup_cols = [col for col in ("ENSP", "ENST", "ENSG", "geneid", "symbol", "uniprot_id") if col in fasta_df.columns]
+    if lookup_cols:
+        lookup = fasta_df.set_index("protein")
+        for col in lookup_cols:
+            if col not in df.columns:
+                df[col] = pd.NA
+            else:
+                df[col] = df[col].replace("", pd.NA)
+            df[col] = df[col].fillna(df["protein"].map(lookup[col]))
 
     if fa_psp_ref:
         logger.info("FASTA data loaded successfully.")
     else:
         logger.info("Failed to load FASTA data.")
 
-    df = mapper.extract_keyvals_pipedsep(df)
     if uniprot_check:
         logger.info("adding uniprot info")
         df = mapper.add_uniprot(df)
@@ -831,7 +912,7 @@ def fast_token_match(
 
     # Find best match per protein_id
     best_idx = similarity.argmax(axis=1).A.flatten()  # to 1D numpy
-    best_score = similarity.max(axis=1).A.flatten()
+    best_score = similarity.max(axis=1).toarray().flatten()
 
     # matched_fasta = np.array(fasta_headers)[best_idx]
     matched_fasta = np.array(list(fasta_headers))[best_idx]
@@ -846,16 +927,27 @@ def fast_token_match(
 
     # Optional: filter out weak matches
     # if min_score > 1:
-    lowmatches = result[result["overlap_score"] < min_score]
+    lowmatches = result[result["overlap_score"] < min_score].copy()
     if len(lowmatches) > 0:
-        logger.warning(f"some bad matches between protein column and fasta header")
-        result.loc[lowmatches.index, "best_fasta_fullname"] = result.loc[
-            lowmatches.index, "protein_id"
-        ]
+        logger.warning(
+            "%d low-overlap matches between protein column and FASTA header",
+            len(lowmatches),
+        )
+        result.loc[lowmatches.index, "best_fasta_fullname"] = pd.NA
+
+    fasta_header_set = set(str(h) for h in fasta_headers)
+    not_in_fasta = ~result["best_fasta_fullname"].isin(fasta_header_set)
+    if not_in_fasta.any():
+        missing_df = result[not_in_fasta].copy()
+        logger.warning(
+            "%d matches not present in FASTA keys", missing_df.shape[0]
+        )
+        result.loc[not_in_fasta, "best_fasta_fullname"] = pd.NA
+        lowmatches = pd.concat([lowmatches, missing_df], ignore_index=True)
 
     res_dict = result.set_index("protein_id")["best_fasta_fullname"].to_dict()
 
-    return res_dict
+    return res_dict, lowmatches
 
 
 from .io_psm import *

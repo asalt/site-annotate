@@ -1,6 +1,7 @@
 # mapper.py
 
 import os
+from collections import defaultdict
 from pathlib import Path
 import re
 import pandas as pd
@@ -133,12 +134,36 @@ def add_uniprot(df):
     This tries to map ENSP values to uniprot IDs
     in the future could add support for other identifiers
     """
-    if "uniprot_id" in df.columns or "acc_id" in df.columns:
-        return (
-            df.rename(columns={"acc_id": "uniprot_id"})
-            if "acc_id" in df.columns
-            else df
-        )
+    if "uniprot_id" in df.columns:
+        return df
+    if "acc_id" in df.columns:
+        return df.rename(columns={"acc_id": "uniprot_id"})
+
+    df = df.copy()
+
+    if "protein_ids" in df.columns:
+        if "uniprot_id" not in df.columns:
+            df["uniprot_id"] = pd.Series(pd.NA, index=df.index)
+
+        def _extract_primary_uniprot(val):
+            if pd.isna(val):
+                return pd.NA
+            if isinstance(val, list):
+                for item in val:
+                    if item:
+                        return item.split(";")[0]
+                return pd.NA
+            text = str(val)
+            if not text:
+                return pd.NA
+            parts = [p for p in text.split(";") if p]
+            return parts[0] if parts else pd.NA
+
+        protein_ids_uniprot = df["protein_ids"].apply(_extract_primary_uniprot)
+        df["uniprot_id"] = df["uniprot_id"].fillna(protein_ids_uniprot)
+
+        if df["uniprot_id"].notna().all():
+            return df
 
     proteins_ENSP = {
         protein: find_ENSP(protein) for protein in df["protein"].dropna().unique()
@@ -166,7 +191,8 @@ def add_uniprot(df):
 
     # xs = [ x for x in final_items.values() if isinstance(x.get('uniprot', {}).get('Swiss-Prot'), list) ]
 
-    return map_proteins_to_uniprot(df, final_items)
+    df = map_proteins_to_uniprot(df, final_items)
+    return df
 
 
 def add_annotations(data):
@@ -301,3 +327,84 @@ def extract_keyvals_pipedsep(df, col="protein"):
     res_df = pd.DataFrame.from_records(res)
     df = df.join(res_df, how="left")
     return df
+
+
+def build_fasta_token_index(fasta_df: pd.DataFrame) -> dict:
+    token_cols = [col for col in ("ENSP", "ENST", "ENSG", "geneid", "symbol") if col in fasta_df.columns]
+    index = defaultdict(set)
+
+    proteins = fasta_df["protein"].astype(str).tolist()
+
+    for key, header in zip(proteins, proteins):
+        for token in header.split("|"):
+            token = token.strip()
+            if token:
+                index[token].add(key)
+
+    for col in token_cols:
+        values = fasta_df[col].tolist()
+        for key, val in zip(proteins, values):
+            if pd.isna(val):
+                continue
+            for token in str(val).replace("|", ";").split(";"):
+                token = token.strip()
+                if token:
+                    index[token].add(key)
+
+    return {k: v for k, v in index.items()}
+
+
+def build_fasta_uniprot_index(fasta_df: pd.DataFrame) -> dict:
+    if "uniprot_id" not in fasta_df.columns:
+        return {}
+
+    index = defaultdict(set)
+    for key, uni in zip(fasta_df["protein"].astype(str), fasta_df["uniprot_id"]):
+        if pd.isna(uni):
+            continue
+        index[str(uni)].add(key)
+
+    return {k: v for k, v in index.items()}
+
+
+def build_uniprot_to_fasta_map(df: pd.DataFrame) -> dict:
+    if df is None or df.empty:
+        return {}
+
+    index = defaultdict(set)
+    for uni, key in zip(df["uniprot_id"], df["__fasta_key"]):
+        if pd.isna(uni) or pd.isna(key):
+            continue
+        index[str(uni)].add(str(key))
+    return {k: v for k, v in index.items()}
+
+
+def build_fasta_synonym_headers(fasta_df: pd.DataFrame) -> list[str]:
+    token_cols = [col for col in ("protein", "ENSP", "ENST", "ENSG", "geneid", "symbol") if col in fasta_df.columns]
+    uniprot_present = "uniprot_id" in fasta_df.columns
+
+    headers = []
+    for _, row in fasta_df.iterrows():
+        tokens = []
+        for col in token_cols:
+            val = row.get(col)
+            if pd.isna(val):
+                continue
+            for token in re.split(r"[;|]", str(val)):
+                token = token.strip()
+                if token:
+                    tokens.append(token)
+        if uniprot_present and pd.notna(row.get("uniprot_id")):
+            tokens.append(str(row["uniprot_id"]))
+
+        tokens = [str(row["protein"])] + tokens + [str(row["protein"])]
+        dedup = []
+        seen = set()
+        for token in tokens:
+            token = token.strip()
+            if token and token not in seen:
+                dedup.append(token)
+                seen.add(token)
+        headers.append("|".join(dedup))
+
+    return headers

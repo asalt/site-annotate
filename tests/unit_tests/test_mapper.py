@@ -26,3 +26,19 @@ def test_add_uniprot(mock_get_db):
     assert "uniprot_id" in result_df.columns
     assert result_df.at[0, "uniprot_id"] == "Q8N1F7"
     assert pd.isna(result_df.at[1, "uniprot_id"])
+
+
+def test_add_uniprot_from_protein_ids():
+    df = pd.DataFrame(
+        {
+            "protein": [
+                "gene|ENSP|ENSP00000440235|more",
+                "gene|ENSP|ENSP00000440236|more",
+            ],
+            "protein_ids": ["Q8N1F7;Q9XXXX", pd.NA],
+        }
+    )
+
+    result_df = add_uniprot(df)
+    assert result_df.at[0, "uniprot_id"] == "Q8N1F7"
+    assert pd.isna(result_df.at[1, "uniprot_id"])

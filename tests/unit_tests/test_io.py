@@ -129,3 +129,65 @@ def test_explode_mapped_proteins_realdata():
     # assert all(
     #     df[["spectrum", "peptide", "modified_peptide", "protein"]].value_counts() == 1
     # )
+
+
+def test_prepare_psm_file_diann_like():
+
+    df = pd.DataFrame(
+        {
+            "sequence": ["AAAK", "BBBK"],
+            "sequence_modi": ["AAAK", "BBBK"],
+            "precursor_area": [1000.0, 2000.0],
+            "protein_ids": ["P12345;P67890", "P54321"],
+            "ensps_all": [
+                "ENSP|ENSP000001;ENSP|ENSP000002",
+                "ENSP|ENSP000003",
+            ],
+            "precursor_lib_index": ["lib_a", "lib_b"],
+            "modified_sequence": [
+                "AAAS(UniMod:21)",
+                "M(UniMod:35)BBK",
+            ],
+            "site_occupancy_probabilities": [
+                "A{0.000000}A{0.000000}A{0.000000}S(UniMod:21){1.000000}2",
+                "M(UniMod:35){0.750000}BBK",
+            ],
+        }
+    )
+
+    df_prepared = io.prepare_psm_file(df.copy())
+
+    assert set(["peptide", "intensity", "protein", "mapped_proteins"]).issubset(
+        df_prepared.columns
+    )
+    assert df_prepared["peptide"].iloc[0] == "AAAK"
+    assert (
+        df_prepared.loc[df_prepared["peptide"] == "BBBK", "intensity"].unique()[0]
+        == 2000.0
+    )
+    assert set(df_prepared.loc[df_prepared["peptide"] == "AAAK", "protein"]) == {
+        "ENSP|ENSP000001",
+        "ENSP|ENSP000002",
+    }
+    mapped = (
+        df_prepared.loc[df_prepared["peptide"] == "AAAK", "mapped_proteins2"]
+        .explode()
+        .dropna()
+        .unique()
+    )
+    assert set(mapped) == {"ENSP|ENSP000001", "ENSP|ENSP000002"}
+
+    sty_vals = df_prepared.loc[df_prepared["peptide"] == "AAAK", "sty_79_9663"]
+    assert sty_vals.notna().any()
+    assert sty_vals.dropna().iloc[0] == "A(0.000000)A(0.000000)A(0.000000)S(1.000000)"
+    sty_best = df_prepared.loc[df_prepared["peptide"] == "AAAK", "sty_79_9663_best_localization"]
+    assert sty_best.dropna().iloc[0] == 1.0
+
+    ox_vals = df_prepared.loc[df_prepared["peptide"] == "BBBK", "m_15_9949"]
+    assert ox_vals.notna().any()
+    assert ox_vals.dropna().iloc[0] == "M(0.750000)BBK"
+    ox_best = df_prepared.loc[df_prepared["peptide"] == "BBBK", "m_15_9949_best_localization"]
+    assert ox_best.dropna().iloc[0] == 0.75
+
+    spectrum_vals = df_prepared.loc[df_prepared["peptide"] == "AAAK", "spectrum"].unique()
+    assert set(spectrum_vals) == {"lib_a"}
