@@ -2,7 +2,8 @@
 import pandas as pd
 import logging
 from typing import Iterable, Tuple
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
 import pyfaidx
 from tqdm import tqdm
@@ -111,7 +112,8 @@ def run_pipeline(
         ]
         batches = [df.loc[ixs] for ixs in indices]
 
-        with ProcessPoolExecutor(max_workers=cores) as executor:
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.ProcessPoolExecutor(max_workers=cores) as executor:
             futures = {
                 executor.submit(
                     process_batch,
