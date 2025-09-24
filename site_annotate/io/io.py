@@ -656,11 +656,30 @@ def merge_metadata(
         subsel = reduce.make_nr(combined_rdesc, **kwargs)
         combined_rdesc_subsel = combined_rdesc.loc[subsel.index]
         combined_emat_subsel = combined_emat.loc[subsel.index]
-        write_gct(combined_emat_subsel, cdesc=cdesc, rdesc=combined_rdesc, filename=str(filepath)+"_nr")
+        write_gct(
+            combined_emat_subsel,
+            cdesc=cdesc,
+            rdesc=combined_rdesc,
+            filename=str(filepath) + "_nr",
+        )
+
+        combined_df_nr = combined_rdesc_subsel.join(combined_emat_subsel)
+        write_excel(
+            combined_df_nr,
+            filename=str(filepath) + "_nr",
+            shape=combined_emat_subsel.shape,
+            column_metadata=cdesc,
+        )
 
     write_gct(combined_emat, cdesc=cdesc, rdesc=combined_rdesc, filename=filepath)
 
     combined_df = combined_rdesc.join(combined_emat)
+    write_excel(
+        combined_df,
+        filename=filepath,
+        shape=combined_emat.shape,
+        column_metadata=cdesc,
+    )
 
     return combined_df
 
@@ -725,6 +744,69 @@ def write_gct(emat, cdesc, rdesc=None, filename="siteinfo_combined"):
             row_str = f"{gene_name}\t{rdesc_str}\t" + "\t".join(map(str, row_data))
 
             f.write(row_str + "\n")
+
+
+def write_excel(
+    df: pd.DataFrame,
+    filename="siteinfo_combined",
+    shape=None,
+    sheet_name="data",
+    column_metadata: pd.DataFrame | None = None,
+):
+    """Write the merged data to an Excel workbook, including column metadata."""
+    filename = str(filename)
+    if shape is None:
+        shape = df.shape
+    num_rows, num_cols = shape
+    outname = f"{filename}_{num_rows}x{num_cols}.xlsx"
+
+    excel_df = df.reset_index()
+    if "index" in excel_df.columns:
+        excel_df = excel_df.rename(columns={"index": "site_id"})
+
+    sheets = [(sheet_name, excel_df, (1, 1))]
+
+    if column_metadata is not None:
+        column_metadata_sheet = column_metadata.copy()
+        idx_name = column_metadata_sheet.index.name or "sample"
+        column_metadata_sheet = column_metadata_sheet.reset_index()
+        if "index" in column_metadata_sheet.columns:
+            column_metadata_sheet = column_metadata_sheet.rename(
+                columns={"index": idx_name}
+            )
+        sheets.append(("column_metadata", column_metadata_sheet, (1, 0)))
+
+    try:
+        import xlsxwriter  # noqa: F401
+
+        engine = "xlsxwriter"
+    except ImportError:
+        engine = None
+
+    if engine:
+        with pd.ExcelWriter(outname, engine=engine) as writer:
+            for sheet, sheet_df, freeze in sheets:
+                sheet_df.to_excel(writer, index=False, sheet_name=sheet)
+                worksheet = writer.sheets[sheet]
+                if freeze is not None:
+                    worksheet.freeze_panes(*freeze)
+                worksheet.autofilter(0, 0, sheet_df.shape[0], sheet_df.shape[1] - 1)
+
+                for col_idx, col_name in enumerate(sheet_df.columns):
+                    series = sheet_df[col_name].fillna("")
+                    lengths = [len(str(value)) for value in series]
+                    max_len = max(lengths + [len(str(col_name))]) if lengths else len(
+                        str(col_name)
+                    )
+                    max_len = min(max_len, 50)
+                    worksheet.set_column(col_idx, col_idx, max_len + 2)
+    else:
+        logger.warning(
+            "xlsxwriter not available; writing Excel output without custom formatting"
+        )
+        with pd.ExcelWriter(outname) as writer:
+            for sheet, sheet_df, _ in sheets:
+                sheet_df.to_excel(writer, index=False, sheet_name=sheet)
 
 
 def load_and_validate_files(psm_path, fasta_path, uniprot_check):

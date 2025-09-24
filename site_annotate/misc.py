@@ -1,3 +1,4 @@
+# this is extra not being used?
 # modisite.py
 import re
 import pandas as pd
@@ -9,6 +10,37 @@ from . import log
 pd.options.display.max_columns = 99
 
 logger = log.get_logger(__file__)
+
+AMBIGUOUS_RESIDUE_MAP = str.maketrans({
+    "I": "L",
+    "i": "l",
+    "J": "L",
+    "j": "l",
+})
+
+
+def normalize_sequence(seq: str) -> str:
+    """Normalize ambiguous residues so lookups tolerate I/L swaps."""
+    return seq.translate(AMBIGUOUS_RESIDUE_MAP)
+
+
+def find_peptide_start(sequence: str, peptide: str) -> int:
+    """Return 1-indexed start position of peptide within sequence, 0 if not found."""
+    if not isinstance(sequence, str) or not isinstance(peptide, str):
+        return 0
+
+    idx = sequence.find(peptide)
+    if idx != -1:
+        return idx + 1
+
+    normalized_seq = normalize_sequence(sequence)
+    normalized_pep = normalize_sequence(peptide)
+
+    idx = normalized_seq.find(normalized_pep)
+    if idx != -1:
+        return idx + 1
+
+    return 0
 
 
 def extract_positions(sequence):
@@ -92,38 +124,6 @@ def position_dict_to_df(position_dict):
     return df
 
 
-AMBIGUOUS_RESIDUE_MAP = str.maketrans({
-    "I": "L",
-    "i": "l",
-    "J": "L",
-    "j": "l",
-})
-
-
-def normalize_sequence(seq: str) -> str:
-    """Normalize ambiguous residues so lookups tolerate I/L swaps."""
-    return seq.translate(AMBIGUOUS_RESIDUE_MAP)
-
-
-def find_peptide_start(sequence: str, peptide: str) -> int:
-    """Return 1-indexed start position of peptide within sequence, 0 if not found."""
-    if not isinstance(sequence, str) or not isinstance(peptide, str):
-        return 0
-
-    idx = sequence.find(peptide)
-    if idx != -1:
-        return idx + 1
-
-    normalized_seq = normalize_sequence(sequence)
-    normalized_pep = normalize_sequence(peptide)
-
-    idx = normalized_seq.find(normalized_pep)
-    if idx != -1:
-        return idx + 1
-
-    return 0
-
-
 def create_15mer(sequence, position):  # ! position is 1 indexed
     if pd.isna(position):
         return
@@ -136,7 +136,8 @@ def create_15mer(sequence, position):  # ! position is 1 indexed
     try:
         reslist[7] = reslist[7].lower()
     except IndexError:
-        return None
+        1+1
+        raise IndexError()
     return "".join(reslist)
 
 
@@ -153,7 +154,7 @@ def quant_isobaric_site(psms_positions):
     #
 
     intensity_dstr = ratios.mul(psms_positions["intensity"], axis=0)
-    _rename = {col: col.strip("_ratio") + "_intensity" for col in intensity_dstr.columns}
+    _rename = {col: col.strip("ratio") + "intensity" for col in intensity_dstr.columns}
     intensity_dstr = intensity_dstr.rename(columns=_rename)
 
 
@@ -181,8 +182,6 @@ def extract_and_transform_data(df, col):
 
     """
     _data = df[~df[col].isna()][col]
-    if _data.empty:
-        return
     res = _data.apply(extract_positions)  # res is a pd.Series
     res_series_of_dfs = res.apply(position_dict_to_df)
     res_df = reset_inner_index(res_series_of_dfs)
@@ -201,10 +200,7 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
     Returns:
     pd.DataFrame: The enhanced DataFrame with additional positional data.
     """
-    if res_df is None or res_df.empty:
-        return
 
-    # import ipdb; ipdb.set_trace()
     df_positions = pd.merge(res_df, df, left_on="original_index", right_index=True)
     # df_positions["position_absolut"] = (
     # df_positions["position_relative"] + df_positions["protein_start"]
@@ -350,9 +346,6 @@ def process_probability_and_filter(df_positions, col, cutoff=0.5, take_best=True
         ]
     else:
         _res = df_positions[(df_positions.prob > cutoff)]
-
-    if _res.empty:
-        return df_positions
 
     return _res
 
@@ -522,11 +515,8 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         #     1+1
 
         res_df = extract_and_transform_data(df, col)
-        if res_df is None:
-            continue
-
         df_positions = enhance_dataframe(res_df, df, seqinfo)
-        if df_positions is None or len(df_positions) == 0: # can happen different protein isoforms or there's no modification of that type
+        if len(df_positions) == 0: # can happen different protein isoforms..?
             continue
 
         df_positions["modi_abbrev"] = modi_abbrev

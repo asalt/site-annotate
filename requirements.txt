@@ -1,6 +1,7 @@
 requests
 click
 pandas
+XlsxWriter
 pytest
 pytest-mock
 pyjanitor
