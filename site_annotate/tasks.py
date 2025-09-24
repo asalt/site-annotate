@@ -3,7 +3,6 @@ import os
 import subprocess
 import tempfile
 import pathlib
-from rpy2 import robjects
 
 
 def run_r_code_with_params(params_dict, interactive=False):
@@ -14,9 +13,11 @@ def run_r_code_with_params(params_dict, interactive=False):
     run_source = pathlib.Path(__file__).parent / ".." / "R" / "run.R"
     r_folder = run_source.parent
 
-    for key in ("data_dir", "config_file", "gct_file"):
+    for key in ("data_dir", "config_file"):  # , "gct_file"):
         if key not in params_dict:
-            raise ValueError(f"{key} not defined")
+            raise ValueError(f"{key} not found")
+
+    gct_file = params_dict.get("gct_file", "NULL") # if it is null will try to load it from config file
 
     assert os.path.exists(run_source), f"File not found: {run_source}"
 
@@ -29,6 +30,8 @@ def run_r_code_with_params(params_dict, interactive=False):
     # }}
     setwd("{r_folder}")
     source("{run_source}")
+
+    gct_file <- {gct_file}
 
     # Run the main function
     print(paste0('Output dir is: ', output_dir))
@@ -52,19 +55,15 @@ def run_r_code_with_params(params_dict, interactive=False):
     # Run the R script
     try:
         if not interactive:
-
-            # process = subprocess.Popen(
-            #     ["R", "--no-save"],
-            #     stdin=subprocess.PIPE,
-            #     stdout=subprocess.PIPE,
-            #     stderr=subprocess.PIPE,
-            #     text=True,  # Ensure text mode for stdin/stdout
-            # )
-            # # Send commands to the R session
-            # stdout, stderr = process.communicate(input=temp_r_path)
             subprocess.run(["Rscript", "--no-save", temp_r_path], check=True)
-            # subprocess.run(["R", "--no-save", "-f", temp_r_path], check=True)
         else:
+            try:
+                from rpy2 import robjects
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Interactive mode requires rpy2; install it or disable --interactive"
+                ) from exc
+
             robjects.r(r_code)
 
     except subprocess.CalledProcessError as e:
