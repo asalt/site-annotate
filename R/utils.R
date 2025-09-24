@@ -1,6 +1,7 @@
 suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(rlang))
 
 
 
@@ -169,15 +170,22 @@ dist_no_na <- function(mat) {
   return(edist)
 }
 
-normalize_gct <- function(gct, log_transform = FALSE) {
+normalize_gct <- function(gct, mednorm=TRUE, log_transform = FALSE) {
   # grouping by species could be implemented here
   # log_msg(msg="zscoring gct file by row")
   # log_msg(msg=paste0("group_by is set to: ", group_by))
-  res <- gct %>%
-    melt_gct() %>%
-    group_by(id.y) %>%
-    dplyr::mutate(value_norm = value / median(value, na.rm = T)) %>%
-    dplyr::ungroup()
+
+
+  if (mednorm == TRUE){
+    res <- gct %>%
+      melt_gct() %>%
+      group_by(id.y) %>%
+      dplyr::mutate(value_norm = value / median(value, na.rm = T)) %>%
+      dplyr::ungroup()
+  } else{
+    res <- gct %>% melt_gct()
+  }
+
 
   if (log_transform) {
     res %<>% mutate(value_norm = log2(value_norm))
@@ -286,10 +294,10 @@ infer_ordered_factor <- function(column) {
     non_numeric_values <- tolower(column[non_numeric_indices])
 
     # Assign special order value for "veh" or "vehicle"
-    is_vehicle <- grepl("^veh$|^vehicle$", non_numeric_values)
+    is_vehicle <- grepl("^veh$|^vehicle$|^none$", non_numeric_values)
     order_values[non_numeric_indices[is_vehicle]] <- min_num - 2 # Highest priority
 
-    is_ctrl <- grepl("^veh$|^control$", non_numeric_values)
+    is_ctrl <- grepl("^veh$|^control$|^none$", non_numeric_values)
     order_values[non_numeric_indices[is_ctrl]] <- min_num - 2 # Highest priority
 
     # Assign next priority to other non-numeric values
@@ -387,6 +395,14 @@ filter_observations <- function(df, column, threshold_ratio) {
   return(df_filtered)
 }
 
+filter_taxon <- function(gct, taxonid){ # not being used
+  if (taxonid == "all") return(gct)
+
+  if ("taxon" %in% colnames(gct@rdesc)){
+    subsel <- gct@rdesc %>% dplyr::filter(taxon==taxonid)
+  }
+
+}
 
 
 condense_groups <- function(.mat, include_annotations = TRUE) {
@@ -406,6 +422,9 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
 
   # Define the annotation columns if needed
   required_non_numeric_exclusions <- if (include_annotations) c("ms_lit", "lt_lit") else character(0)
+  if (include_annotations && !all(required_non_numeric_exclusions %in% colnames(.mat))) {
+    required_non_numeric_exclusions <- character(0)  # If annotations are not present, exclude them
+  }
 
   # Identify numeric and non-numeric columns excluding specific columns
   numeric_cols <- sapply(.mat, is.numeric) & !names(.mat) %in% required_non_numeric_exclusions
@@ -439,7 +458,7 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
           str_wrap(width = 48)
       )
     condensed_data %<>% rename(sitename = aggregated_sitename)
-    if (!"ms_lit" %in% colnames(condensed_data)) {
+    if (!"ms_lit" %in% colnames(condensed_data) && "aggregated_ms_lit" %in% colnames(condensed_data)) {
       condensed_data %<>% rename(ms_lit = aggregated_ms_lit, lt_lit = aggregated_lt_lit)
     }
   }
@@ -462,7 +481,7 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
   selected_numeric <- names(.mat)[numeric_cols]
   selected_non_numeric <- names(.mat)[non_numeric_cols]
 
-  # A sentinel value that doesn't appear naturally in your data
+  # A sentinel value that doesn't appear naturally in the data
   sentinel_val <- -9999999
 
   # Temporarily replace NA with the sentinel
@@ -498,7 +517,7 @@ condense_groups <- function(.mat, include_annotations = TRUE) {
       rename(sitename = aggregated_sitename)
 
     # If ms_lit/lt_lit are expected, rename them
-    if (!"ms_lit" %in% colnames(condensed_data)) {
+    if (!"ms_lit" %in% colnames(condensed_data) && "aggregated_ms_lit" %in% colnames(condensed_data)) {
       condensed_data <- condensed_data %>%
         rename(
           ms_lit = aggregated_ms_lit,
@@ -598,6 +617,16 @@ filter_nonzeros <- function(gct,
   # 3) Figure out how we’ll group the data
   #------------------------------------------------
   # Always group by 'id.x'; optionally group by the subgroup
+  cutoff <- min_non_zeros * length(gct@cdesc$id)
+  cutoff <- data.frame(id.y = gct@cdesc$id, cutoff = cutoff)
+
+  if (!is.null(nonzero_subgroup)){
+    cutoff <-  gct@cdesc %>%   group_by(.data[[nonzero_subgroup]]) %>%  summarize(cutoff = n())
+  #cutoff <- gct@cdesc %>%
+  # group_by(across(all_of(group_vars[group_vars != "id.x"]))) %>%
+  #summarize(cutoff = n() * min_non_zeros, .groups="drop")k
+  }
+
   group_vars <- "id.x"
   if (!is.null(nonzero_subgroup)) {
     group_vars <- c(group_vars, nonzero_subgroup)
@@ -606,26 +635,135 @@ filter_nonzeros <- function(gct,
   #------------------------------------------------
   # 4) Count non-NA and non-zero values within each group
   #------------------------------------------------
+
   count_df <- melted_df %>%
     filter(!is.na(value), value != 0) %>%
     group_by(across(all_of(group_vars))) %>%
-    summarise(n_nonzeros = n(), .groups = "drop")
+    summarise(n_nonzeros = n(), .groups = "drop") %>%
+    left_join(cutoff, by=group_vars)#"id.y")
 
   #------------------------------------------------
   # 5) Keep only those groups that meet the min_non_zeros cutoff
   #------------------------------------------------
-  # browser()
   valid_groups <- count_df %>%
-    filter(n_nonzeros >= min_non_zeros) %>%
+    mutate(cutoff=cutoff) %>%
+    filter(n_nonzeros >= cutoff) %>%
     # keep only the grouping columns, so we can join back
     select(all_of(group_vars)) %>%
     distinct()
   to_keep <- unique(valid_groups$id.x)
+  browser()
 
   new_gct <- gct %>% subset_gct(rid = to_keep)
 
   return(new_gct)
 }
+
+
+
+
+filter_nonzeros <- function(gct,
+                            min_non_zeros = 1,
+                            nonzero_subgroup = NULL) {
+  #------------------------------------------------
+  # 1) Melt the GCT into long / tidy form
+  #------------------------------------------------
+  melted_df <- gct %>%
+    melt_gct()
+
+  #------------------------------------------------
+  # 2) Validate subgroup if provided
+  #------------------------------------------------
+  if (!is.null(nonzero_subgroup)) {
+    if (!nonzero_subgroup %in% colnames(gct@cdesc)) {
+      stop(
+        sprintf(
+          "Column '%s' specified in 'nonzero_subgroup' does not exist in gct@cdesc.",
+          nonzero_subgroup
+        )
+      )
+    }
+  }
+
+  #------------------------------------------------
+  # 3) Compute cutoff table
+  #------------------------------------------------
+  if (is.null(nonzero_subgroup)) {
+    # Global cutoff across all samples
+    cutoff_df <- data.frame(cutoff = min_non_zeros * nrow(gct@cdesc))
+    group_vars <- c("id.x")
+  } else {
+    # Per-subgroup cutoff
+    cutoff_df <- gct@cdesc %>%
+      group_by(.data[[nonzero_subgroup]]) %>%
+      summarize(cutoff = n() * min_non_zeros, .groups = "drop")
+    group_vars <- c("id.x", nonzero_subgroup)
+  }
+
+  #------------------------------------------------
+  # 4) Count non-zero, non-NA values per feature (and subgroup if provided)
+  #------------------------------------------------
+  count_df <- melted_df %>%
+    filter(!is.na(value), value != 0) %>%
+    left_join(gct@cdesc %>% select(id.y = id, !!nonzero_subgroup), by = "id.y") %>%
+    group_by(across(all_of(group_vars))) %>%
+    summarize(n_nonzeros = n(), .groups = "drop")
+
+  #------------------------------------------------
+  # 5) Join with cutoff and keep valid rows
+  #------------------------------------------------
+  if (is.null(nonzero_subgroup)) {
+    count_df$cutoff <- min_non_zeros
+  } else {
+    count_df <- left_join(count_df, cutoff_df, by = nonzero_subgroup)
+  }
+
+  valid_groups <- count_df %>%
+    filter(n_nonzeros >= cutoff) %>%
+    distinct(id.x)
+
+  to_keep <- unique(valid_groups$id.x)
+  #------------------------------------------------
+  # 6) Subset and return
+  #------------------------------------------------
+  new_gct <- gct %>% subset_gct(rid = to_keep)
+  return(new_gct)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
