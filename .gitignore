@@ -2,6 +2,21 @@
 data/*
 data/phosphositeplus/*
 
+# R cache artifacts
+R/cache.sqlite
+cache_models/
+
+# Test fixtures generated locally
+tests/testdata/*.tsv
+tests/testdata/*.fai
+tests/testdata/*.fxi
+
+# Local analysis scripts
+scripts/
+
+# Generated documents
+*.pdf
+
 *.dot
 *.svg
 *.png
@@ -116,4 +131,3 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-

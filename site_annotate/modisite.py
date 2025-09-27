@@ -120,8 +120,11 @@ def find_peptide_start(sequence: str, peptide: str) -> int:
     idx = normalized_seq.find(normalized_pep)
     if idx != -1:
         return idx + 1
-
-    return 0
+    else:
+        return idx # negative 1
+        # import ipdb; ipdb.set_trace()
+        # 1+1
+    # return 0
 
 
 def create_15mer(sequence, position):  # ! position is 1 indexed
@@ -214,6 +217,16 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
     df_positions["position_start"] = df_positions.apply(
         lambda x: find_peptide_start(orig_sequence, x["peptide"]), axis=1
     )
+    # if any(df_positions.uniprot_id == 'P49750'):
+    #     import ipdb; ipdb.set_trace()
+
+    # if any(df_positions["position_start"] == -1):
+    #     import ipdb; ipdb.set_trace()
+    # if any(df_positions["position_start"] == 0):
+    #     import ipdb; ipdb.set_trace()
+    df_positions = df_positions[ df_positions["position_start"] != -1].copy()
+    if df_positions.empty:
+        return
     df_positions["protein_start"] = df_positions["position_start"]
 
     df_positions["position_absolut"] = (
@@ -221,8 +234,9 @@ def enhance_dataframe(res_df, df, seqinfo) -> pd.DataFrame:
     )
 
     # pos = psp_sequence.find(x["peptide"])
-    df_positions.loc[df_positions.position_start == 0, "position_start"] = pd.NA
-    df_positions.loc[df_positions.protein_start == 0, "position_start"] = pd.NA
+    # don't do this
+    # df_positions.loc[df_positions.position_start == 0, "position_start"] = pd.NA
+    # df_positions.loc[df_positions.protein_start == 0, "position_start"] = pd.NA
 
     if "psp" in seqinfo:
         # if seqinfo['psp']['name'] == 'Q9Z2I9':
@@ -295,6 +309,8 @@ def compute_additional_attributes(df_positions, sequence) -> pd.DataFrame:
         lambda x: create_15mer(sequence, x["position_absolut"]), axis=1
     )
     df_positions["protein_length"] = len(sequence)
+    # if all(df_positions["fifteenmer"] ==''):
+    #     import ipdb; ipdb.set_trace()
 
     if "symbol" not in df_positions.columns:
         df_positions["symbol"] = "??"
@@ -522,6 +538,7 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         #     1+1
 
         res_df = extract_and_transform_data(df, col)
+        # import ipdb; ipdb.set_trace()
         if res_df is None:
             continue
 
@@ -532,6 +549,7 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         df_positions["modi_abbrev"] = modi_abbrev
 
         df_positions = compute_additional_attributes(df_positions, sequence)
+        # import ipdb; ipdb.set_trace()
 
 
         if isobaric:
@@ -539,6 +557,9 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
 
         df_positions_filtered = process_probability_and_filter(df_positions, col)
         df_positions_filtered = reorder_nice(df_positions_filtered)
+        # if df_positions_filtered.empty:
+            # import ipdb; ipdb.set_trace()
+            # 1+1
         RESULTS[col] = df_positions_filtered
 
     return RESULTS

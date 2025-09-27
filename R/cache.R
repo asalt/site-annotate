@@ -1,10 +1,96 @@
 suppressPackageStartupMessages(library(RSQLite))
 
 
+.cache_db_path <- function() {
+  getOption("cached_by_db_path", "cache.sqlite")
+}
+
+
+# ---- size-aware cached_by with RDS fallback ----
 `%cached_by%` <- function(compute_func, hashval) {
+  compute_expr <- substitute(compute_func)
+
+  # include expression in hash to avoid collisions when code changes
+  hashval <- rlang::hash(c(hashval, compute_expr))
+
+  # 1) try RDS first (fast path if already on disk)
+  rds_hit <- load_object_from_rds(hashval)
+  if (!is.null(rds_hit)) {
+    message(deparse(compute_expr))
+    message("Cache hit (RDS) for: ", hashval)
+    return(rds_hit)
+  }
+
+  # 2) try DB cache (your existing function)
+  cached_obj <- try(load_object_from_cache(hashval), silent = TRUE)
+  if (!inherits(cached_obj, "try-error") && !is.null(cached_obj)) {
+    message(deparse(compute_expr))
+    message("Cache hit (DB) for: ", hashval)
+    return(cached_obj)
+  }
+
+  # miss -> compute
+  message("Cache miss for hash: ", hashval)
+  message("evaluating: ", deparse(compute_expr))
+  result <- eval(compute_func)
+
+  # 3) decide where to store
+  bytes <- serialized_size(result)
+  # threshold: ~50MB by default; tune via option
+  thresh <- getOption("cached_by_db_threshold_bytes", 50L * 1024L * 1024L)
+
+  if (bytes <= thresh) {
+    # Try DB first; fallback to RDS on error
+    ok <- try({
+      save_object_to_cache(result, hashval,
+                           notes = as.character(deparse(compute_expr)))
+      TRUE
+    }, silent = TRUE)
+    if (inherits(ok, "try-error")) {
+      message("DB cache failed (", conditionMessage(attr(ok, "condition")), "); falling back to RDS")
+      save_object_to_rds(result, hashval,
+                         notes = as.character(deparse(compute_expr)))
+    }
+  } else {
+    message("Object ~", round(bytes/1024^2, 1), " MB exceeds DB threshold; caching to RDS")
+    save_object_to_rds(result, hashval,
+                       notes = as.character(deparse(compute_expr)))
+  }
+
+  result
+}
+
+.cache_rds_dir <- function() {
+  d <- getOption("cached_by_rds_dir", "cache_models")
+  if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  normalizePath(d, winslash = "/", mustWork = FALSE)
+}
+
+rds_path_for_hash <- function(hashval) {
+  file.path(.cache_rds_dir(), paste0("obj_", hashval, ".rds"))
+}
+
+save_object_to_rds <- function(obj, hashval, notes = NULL) {
+  path <- rds_path_for_hash(hashval)
+  saveRDS(obj, path, compress = "xz")
+  invisible(path)
+}
+
+load_object_from_rds <- function(hashval) {
+  path <- rds_path_for_hash(hashval)
+  if (file.exists(path)) readRDS(path) else NULL
+}
+
+serialized_size <- function(obj) {
+  length(serialize(obj, NULL))  # bytes
+}
+
+
+`%cached_by_orig%` <- function(compute_func, hashval) {
 
   compute_expr <- substitute(compute_func) # "Capture" the expression
 
+  hashval <- rlang::hash(c(hashval, compute_expr))
   # Check the cache
   cached_obj <- load_object_from_cache(hashval)
   if (!is.null(cached_obj)) {
@@ -28,7 +114,7 @@ suppressPackageStartupMessages(library(RSQLite))
 
 
 
-initialize_cache_db <- function(db_path = "cache.sqlite", close = TRUE){
+initialize_cache_db <- function(db_path = .cache_db_path(), close = TRUE){
 
   con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
 
@@ -62,11 +148,19 @@ initialize_cache_db <- function(db_path = "cache.sqlite", close = TRUE){
 }
 
 
-load_object_from_cache <- function(object_hash, db_path = "cache.sqlite", con = NULL, close = is.null(con)) {
+load_object_from_cache <- function(object_hash, db_path = .cache_db_path(), con = NULL, close = NA) {
+
+  close_connection <- if (is.na(close)) is.null(con) else isTRUE(close)
 
   if (is.null(con)) {
     con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   }
+
+  on.exit({
+    if (close_connection && !is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   # Query the object cache
   result <- DBI::dbGetQuery(con, "
@@ -75,11 +169,6 @@ load_object_from_cache <- function(object_hash, db_path = "cache.sqlite", con = 
     LIMIT 1",
     params = list(object_hash)
   )
-
-  if (close) {
-    DBI::dbDisconnect(con)
-    message("Connection closed.")
-  }
 
   if (nrow(result) > 0) {
     # Deserialize and load the object
@@ -94,11 +183,19 @@ load_object_from_cache <- function(object_hash, db_path = "cache.sqlite", con = 
 }
 
 
-save_object_to_cache <- function(object, object_hash = NULL, notes = NULL, db_path = "cache.sqlite", con = NULL, close = is.null(con)) {
+save_object_to_cache <- function(object, object_hash = NULL, notes = NULL, db_path = .cache_db_path(), con = NULL, close = NA) {
+
+  close_connection <- if (is.na(close)) is.null(con) else isTRUE(close)
 
   if (is.null(con)) {
     con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   }
+
+  on.exit({
+    if (close_connection && !is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   if (is.null(notes)) {
     notes <- ""
@@ -129,17 +226,21 @@ save_object_to_cache <- function(object, object_hash = NULL, notes = NULL, db_pa
     params = list(serialized_obj_blob, object_hash, notes)
   )
 
-  if (close) {
-    DBI::dbDisconnect(con)
-    message("Connection closed.")
-  }
 }
 
-save_package_to_db <- function(package, db_path = "cache.sqlite", con = NULL, close = is.null(con)) {
+save_package_to_db <- function(package, db_path = .cache_db_path(), con = NULL, close = NA) {
+
+  close_connection <- if (is.na(close)) is.null(con) else isTRUE(close)
 
   if (is.null(con)) {
     con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   }
+
+  on.exit({
+    if (close_connection && !is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   # Load the package
   suppressPackageStartupMessages(library(package, character.only = TRUE))
@@ -164,20 +265,20 @@ save_package_to_db <- function(package, db_path = "cache.sqlite", con = NULL, cl
     params = list(package, serialized_env_blob, package_version)
   )
 
-  if (close) {
-    DBI::dbDisconnect(con)
-  }
-
-  # DBI::dbDisconnect(con)
 }
 
 
 
-log_package_versions_to_db <- function(db_path = "cache.sqlite", con = NULL) {
+log_package_versions_to_db <- function(db_path = .cache_db_path(), con = NULL) {
 
   if (is.null(con)) {
     con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   }
+  on.exit({
+    if (!is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
   # Get installed package versions
   installed_versions <- data.frame(
     package = rownames(installed.packages()),
@@ -187,16 +288,20 @@ log_package_versions_to_db <- function(db_path = "cache.sqlite", con = NULL) {
 
   # Update or insert package versions into the database
   DBI::dbWriteTable(con, "package_versions", installed_versions, append = TRUE, overwrite = FALSE)
-
-  DBI::dbDisconnect(con)
 }
 
-load_package_from_db <- function(package, db_path = "cache.sqlite", con = NULL, close = is.null(con)) {
+load_package_from_db <- function(package, db_path = .cache_db_path(), con = NULL, close = NA) {
 
-  close <- is.null(con)
+  close_connection <- if (is.na(close)) is.null(con) else isTRUE(close)
   if (is.null(con)) {
     con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   }
+
+  on.exit({
+    if (close_connection && !is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   # Query the package cache
   result <- DBI::dbGetQuery(con, "
@@ -205,12 +310,6 @@ load_package_from_db <- function(package, db_path = "cache.sqlite", con = NULL, 
     LIMIT 1",
     params = list(package)
   )
-
-  if (close) {
-    DBI::dbDisconnect(con)
-    message("Connection closed.")
-  }
-
 
   if (nrow(result) > 0) {
 
@@ -236,16 +335,20 @@ load_package_from_db <- function(package, db_path = "cache.sqlite", con = NULL, 
 }
 
 
-.xx_load_environment_from_db <- function(db_path = "cache.sqlite") {
+.xx_load_environment_from_db <- function(db_path = .cache_db_path()) {
   con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
+
+  on.exit({
+    if (!is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   # Query the most recent environment
   result <- DBI::dbGetQuery(con, "
     SELECT serialized_env FROM environment_cache
     ORDER BY timestamp DESC LIMIT 1
   ")
-
-  DBI::dbDisconnect(con)
 
   if (nrow(result) > 0) {
     # Deserialize and load the environment
@@ -261,20 +364,22 @@ load_package_from_db <- function(package, db_path = "cache.sqlite", con = NULL, 
 }
 
 
-check_version_match_db <- function(db_path, packages_to_load, con = NULL, close = is.null(con)) {
+check_version_match_db <- function(db_path = .cache_db_path(), packages_to_load, con = NULL, close = NA) {
+  close_connection <- if (is.na(close)) is.null(con) else isTRUE(close)
   if (is.null(con)) {
     con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   }
+
+  on.exit({
+    if (close_connection && !is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   # Query all stored package versions
   stored_versions <- DBI::dbGetQuery(con, "
     SELECT package, version FROM package_cache
   ")
-  if (close) {
-    DBI::dbDisconnect(con)
-    message("Connection closed.")
-  }
-
   # Get current versions of requested packages
   installed_versions <- data.frame(
     package = packages_to_load,
@@ -316,8 +421,14 @@ check_version_match_db <- function(db_path, packages_to_load, con = NULL, close 
 }
 
 # Load packages and log versions to DB
-._xxload_packages_and_log <- function(db_path, packages_to_load) {
+._xxload_packages_and_log <- function(db_path = .cache_db_path(), packages_to_load) {
   con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
+
+  on.exit({
+    if (!is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   for (pkg in packages_to_load) {
     message(paste("Loading package:", pkg))
@@ -349,17 +460,22 @@ check_version_match_db <- function(db_path, packages_to_load, con = NULL, close 
     params = list(serialized_env_blob, version_hash)
   )
 
-  DBI::dbDisconnect(con)
 }
 
 
-handle_package_cache <- function(package, db_path, con = NULL, force_close = FALSE) {
+handle_package_cache <- function(package, db_path = .cache_db_path(), con = NULL, force_close = FALSE) {
   # Check if the package exists in the cache
 
-  close <- is.null(con) || force_close
+  close_connection <- if (isTRUE(force_close)) TRUE else is.null(con)
   if (is.null(con)) {
     con <- DBI::dbConnect(RSQLite::SQLite(), dbname = db_path)
   }
+
+  on.exit({
+    if (close_connection && !is.null(con) && inherits(con, "DBIConnection")) {
+      try(DBI::dbDisconnect(con), silent = TRUE)
+    }
+  }, add = TRUE)
 
   result <- DBI::dbGetQuery(con, "
     SELECT version FROM package_cache
@@ -367,13 +483,6 @@ handle_package_cache <- function(package, db_path, con = NULL, force_close = FAL
     LIMIT 1",
     params = list(package)
   )
-
-  if (close) {
-    DBI::dbDisconnect(con)
-    message("Connection closed.")
-    con <- NULL
-  }
-
 
   # Get the current installed version
   current_version <- as.character(packageVersion(package))
@@ -392,3 +501,4 @@ handle_package_cache <- function(package, db_path, con = NULL, force_close = FAL
     load_package_from_db(package, db_path, con=con)
   }
 }
+initialize_cache_db()

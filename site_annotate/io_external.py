@@ -13,6 +13,7 @@ from .constants import PHOSPHOSITEPLUS_ANNOTATIONS
 logger = log.get_logger(__file__)
 
 
+
 def set_data_dir():
     # Path of the current script
     current_script_path = Path(__file__).resolve()

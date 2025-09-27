@@ -697,7 +697,7 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
 @click.option(
     "-o",
     "--output-dir",
-    type=click.Path(exists=True, file_okay=False),
+    type=click.Path(exists=False, file_okay=False),
     default=None,
     show_default=True,
 )
@@ -726,6 +726,8 @@ def run(cores, psms, output_dir, prefix, uniprot_check, fasta):
         - sty_79_9663_best_localization
     ...
     """
+    if not os.path.exists(str(output_dir)):
+        os.makedirs(str(output_dir))
     if not psms:
         logger.warning("Warning: No PSM files provided.")
         return

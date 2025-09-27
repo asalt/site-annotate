@@ -1,5 +1,73 @@
 import re
 
+
+RENAME = {
+    "sample_01": "TMT_126",
+    "sample_02": "TMT_127_N",
+    "sample_03": "TMT_127_C",
+    "sample_04": "TMT_128_N",
+    "sample_05": "TMT_128_C",
+    "sample_06": "TMT_129_N",
+    "sample_07": "TMT_129_C",
+    "sample_08": "TMT_130_N",
+    "sample_09": "TMT_130_C",
+    "sample_10": "TMT_131_N",
+    "sample_11": "TMT_131_C",
+    "sample_12": "TMT_132_N",
+    "sample_13": "TMT_132_C",
+    "sample_14": "TMT_133_N",
+    "sample_15": "TMT_133_C",
+    "sample_16": "TMT_134_N",
+    "sample_17": "TMT_134_C",
+    "sample_18": "TMT_135_N",
+    "ion_126_128": "TMT_126",
+    "ion_127_125": "TMT_127_N",
+    "ion_127_131": "TMT_127_C",
+    "ion_128_128": "TMT_128_N",
+    "ion_128_134": "TMT_128_C",
+    "ion_129_131": "TMT_129_N",
+    "ion_129_138": "TMT_129_C",
+    "ion_130_135": "TMT_123_N",
+    "ion_130_141": "TMT_130_C",
+    "ion_131_138": "TMT_131_N",
+}
+RENAME_SHORT = {
+    "sample_01": "TMT_126",
+    "sample_02": "TMT_127_N",
+    "sample_03": "TMT_128_C",
+    "sample_04": "TMT_129_N",
+    "sample_05": "TMT_130_C",
+    "sample_06": "TMT_131_N",
+    "TMT_127": "TMT_127_N",
+    "TMT_128": "TMT_128_C",
+    "TMT_129": "TMT_129_N",
+    "TMT_130": "TMT_130_C",
+    "TMT_131": "TMT_131_N",
+    "126": "TMT_126",
+    "127": "TMT_127_N",
+    "128": "TMT_128_C",
+    "129": "TMT_129_N",
+    "130": "TMT_130_C",
+    "131": "TMT_131_N",
+}
+RENAME.update({y:y for y in RENAME.values()})
+RENAME.update({x.lstrip("TMT_") : y for x,y in RENAME.items()})
+RENAME.update({x.replace("_", "-"): y for x, y in RENAME.items()})
+RENAME.update({x.replace("_", ""): y for x, y in RENAME.items()})
+
+RENAME.update({x + "_intensity": y for x, y in RENAME.items()})
+RENAME.update({v + "_intensity": v for v in RENAME.values()})
+
+
+RENAME_SHORT.update({y:y for y in RENAME.values()})
+RENAME_SHORT.update({x.lstrip("TMT_") : y for x,y in RENAME.items()})
+RENAME_SHORT.update({x.replace("_", "-"): y for x, y in RENAME_SHORT.items()})
+RENAME_SHORT.update({x.replace("_", ""): y for x, y in RENAME.items()})
+RENAME_SHORT.update({x + "_intensity": y for x, y in RENAME.items()})
+RENAME_SHORT.update(
+    {v + "_intensity": v for v in RENAME_SHORT.values() if not v.endswith("_intensity")}
+)
+
 VALID_MODI_COLS = [
     "sty_79_9663",
     "k_42_0106",
@@ -69,6 +137,8 @@ def get_all_possible_id_cols():
         "ENST",
         "ENSG",
         "geneid",
+        "Gene",
+        "ProteinID",
         "taxon",
         "symbol",
         "protein_start",
