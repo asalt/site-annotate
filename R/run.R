@@ -52,6 +52,20 @@ if (is.null(log_tools)) {
   log_error <- log_tools$log_error
 }
 
+sanitize_path_component <- function(name) {
+  if (is.null(name) || !nzchar(name)) {
+    return("unnamed")
+  }
+  name <- trimws(as.character(name))
+  name <- gsub("[[:space:]]+", "_", name)
+  name <- gsub("[^A-Za-z0-9_.-]", "_", name)
+  name <- gsub("_+", "_", name)
+  name <- gsub("^[._]+", "", name)
+  name <- gsub("[._]+$", "", name)
+  if (!nzchar(name)) name <- "unnamed"
+  name
+}
+
 cache_tools <- get_tool_env("cache")
 `%cached_by%` <- cache_tools$`%cached_by%`
 
@@ -444,8 +458,20 @@ run <- function(
 
   .outdir <- file.path(OUTDIR, "export")
   if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
-  log_info("Writing export GCT", context = list(outdir = .outdir))
-  gct %>% write_gct(file.path(.outdir, "export"))
+  export_path <- file.path(.outdir, "export")
+  overwrite_export <- config$advanced$overwrite_export %||% FALSE
+  if (file.exists(export_path) && !overwrite_export) {
+    log_skip(
+      "Export GCT already exists",
+      context = list(path = export_path, overwrite = overwrite_export)
+    )
+  } else {
+    log_info(
+      "Writing export GCT",
+      context = list(outdir = .outdir, overwrite = overwrite_export)
+    )
+    gct %>% write_gct(export_path)
+  }
 
   # ==========================================
   # NAMES SETUP
@@ -493,11 +519,11 @@ run <- function(
 
     topTables %>% purrr::imap(~ { # first loop save tables
       .table <- .x %>% arrange(desc(t))
-      .contrast <- .y
-      .contrast <- str_replace_all(.contrast, "-", "minus")
+      contrast_label <- .y
+      safe_label <- str_replace_all(contrast_label, "-", "minus")
 
       .outdir <- file.path(OUTDIR, "limma", "tables")
-      .outname <- file.path(.outdir, make.names(paste0(OUTNAME, .contrast, ".tsv")))
+      .outname <- file.path(.outdir, make.names(paste0(OUTNAME, safe_label, ".tsv")))
 
       if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
       if (!file.exists(.outname) || config$advanced$replace == TRUE) {
@@ -505,10 +531,10 @@ run <- function(
         log_info("Wrote LIMMA table", context = list(file = .outname))
       }
 
-      .outname <- file.path(.outdir, make.names(paste0(OUTNAME, .contrast, "_pdist.png")))
+      .outname <- file.path(.outdir, make.names(paste0(OUTNAME, safe_label, "_pdist.png")))
       if (!file.exists(.outname) || config$advanced$replace == TRUE) {
         png(.outname, width = 7, height = 4.5, units = "in", res = 300)
-        limma_tools$plot_p_dist(.table, main_title = .contrast)
+        limma_tools$plot_p_dist(.table, main_title = contrast_label)
         dev.off()
         #
 
@@ -535,12 +561,17 @@ run <- function(
 
     topTables %>% purrr::imap(~ { # second loop plot topdiff
       .table <- .x %>% arrange(desc(abs(t)))
-      .contrast <- .y
-      .contrast <- str_replace_all(.contrast, "-", "minus")
+      contrast_label <- .y
+      contrast_expr <- unique(.table$contrast_expression)
+      contrast_expr <- contrast_expr[!is.na(contrast_expr)]
+      if (length(contrast_expr) == 0) contrast_expr <- contrast_label
+      contrast_expr <- contrast_expr[1]
+      safe_label_file <- str_replace_all(contrast_label, "-", "minus")
+      safe_label_dir <- sanitize_path_component(contrast_label)
 
       .outdir <- file.path(OUTDIR, "limma", "tables")
 
-      column_title <- paste0(OUTNAME, "\ncontrast: ", .contrast)
+      column_title <- paste0(OUTNAME, "\ncontrast: ", contrast_label)
 
       param_grid %>% purrr::pmap(~ {
         cut_by_val <- ..1
@@ -582,19 +613,19 @@ run <- function(
         height <- 6 + (.nrow * .20)
         width <- 12 + (.ncol * .26)
 
-        .outdir <- file.path(OUTDIR, "limma", "all")
+          .outdir <- file.path(OUTDIR, "limma", "all", safe_label_dir)
         if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
         .outf <- file.path(
           .outdir,
           make.names(
             paste0(
-              OUTNAME,
-              .contrast, "_",
-              .nrow, "x", .ncol,
-              "_cut_", cut_by_val,
-              "cr_", cluster_rows_val,
-              "cc_", cluster_columns_val,
-              ".pdf"
+                OUTNAME,
+                safe_label_file, "_",
+                .nrow, "x", .ncol,
+                "_cut_", cut_by_val,
+                "cr_", cluster_rows_val,
+                "cc_", cluster_columns_val,
+                ".pdf"
             )
           )
         )
@@ -624,14 +655,14 @@ run <- function(
           {
             column_names <- names(gct@cdesc)
 
-            values <- stringr::str_extract_all(.contrast, "(?<=- )[A-Za-z0-9_]+")[[1]]
-            matched_column <- column_names[purrr::map_lgl(column_names, ~ str_detect(.contrast, .x))]
+            values <- stringr::str_extract_all(contrast_expr, "(?<=- )[A-Za-z0-9_]+")[[1]]
+            matched_column <- column_names[purrr::map_lgl(column_names, ~ str_detect(contrast_expr, .x))]
             if (length(matched_column) == 0) {
-              warning(paste0("No column found matching contrast: ", .contrast))
+              warning(paste0("No column found matching contrast: ", contrast_expr))
               return()
             }
             col_name <- matched_column[1] # Assuming there's one match; adjust if multiple matches needed
-            cleaned_contrast <- str_replace_all(.contrast, col_name, "")
+            cleaned_contrast <- str_replace_all(contrast_expr, col_name, "")
             group_values <- str_split(cleaned_contrast, "\\s?-\\s?") %>%
               unlist() %>%
               str_trim()
@@ -646,14 +677,14 @@ run <- function(
             .nrow <- nrow(.top_tvals)
             .ncol <- ncol(.sub_gct_z@mat)
 
-            .outdir <- file.path(OUTDIR, "limma", "subsets")
-            if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
-            .outf <- file.path(
-              .outdir,
-              make.names(
-                paste0(
+            .outdir <- file.path(OUTDIR, "limma", "subsets", safe_label_dir)
+        if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
+        .outf <- file.path(
+          .outdir,
+          make.names(
+            paste0(
                   OUTNAME,
-                  .contrast, "_",
+                  safe_label_file, "_",
                   .nrow, "x", .ncol,
                   "_cut_", cut_by_val,
                   "cr_", cluster_rows_val,

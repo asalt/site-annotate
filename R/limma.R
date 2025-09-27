@@ -45,6 +45,41 @@ impute_with_draw <- function(values, seed = 123, mean_adjust = -1.8, sd_adjust =
 impute_with_draw <- util_tools$impute_with_draw
 
 
+parse_named_contrasts <- function(strings) {
+  if (is.null(strings) || length(strings) == 0) {
+    return(NULL)
+  }
+
+  parsed <- lapply(strings, function(entry) {
+    entry <- as.character(entry)
+    parts <- strsplit(entry, "=", fixed = TRUE)[[1]]
+
+    if (length(parts) > 1) {
+      label <- trimws(parts[1])
+      expr <- trimws(paste(parts[-1], collapse = "="))
+    } else {
+      label <- trimws(entry)
+      expr <- trimws(entry)
+    }
+
+    if (!nzchar(label)) {
+      label <- expr
+    }
+
+    list(label = label, expression = expr)
+  })
+
+  labels <- vapply(parsed, `[[`, character(1), "label")
+  expressions <- vapply(parsed, `[[`, character(1), "expression")
+
+  data.frame(
+    label = make.unique(labels),
+    expression = expressions,
+    stringsAsFactors = FALSE
+  )
+}
+
+
 run_limma <- function(gct, config, do_impute = TRUE) {
   .formula <- config$limma$formula %||% as.formula("~0 + group")
   print(paste0("formula is : ", .formula))
@@ -76,8 +111,20 @@ run_limma <- function(gct, config, do_impute = TRUE) {
     return(contrast_strings)
   }
 
-  contrast_strings <- config$limma$contrasts %||% generate_contrasts(gct@cdesc, config$limma$group_var %||% "group")
-  contrasts <- makeContrasts(contrasts = contrast_strings, levels = mod)
+  contrast_input <- config$limma$contrasts
+  if (is.null(contrast_input) || length(contrast_input) == 0) {
+    contrast_input <- generate_contrasts(gct@cdesc, config$limma$group_var %||% "group")
+  }
+
+  contrast_defs <- parse_named_contrasts(contrast_input)
+  if (is.null(contrast_defs) || nrow(contrast_defs) == 0) {
+    stop("No LIMMA contrasts could be derived from configuration or metadata.")
+  }
+
+  contrast_exprs <- contrast_defs$expression
+  contrasts <- makeContrasts(contrasts = contrast_exprs, levels = mod)
+  colnames(contrasts) <- contrast_defs$label
+  contrast_lookup <- setNames(contrast_defs$expression, contrast_defs$label)
 
   fit <- limma::lmFit(.mat, mod)
   fit <- contrasts.fit(fit, contrasts)
@@ -95,8 +142,10 @@ run_limma <- function(gct, config, do_impute = TRUE) {
     # assertthat::are_equal(nrow(.x), nrow(.mat))  # this doesn't have to be true
     .table <- .x
     .contrast <- .y
+    .expr <- contrast_lookup[[.contrast]] %||% .contrast
     .table %<>% rownames_to_column(var = "id")
     .table$contrast <- .contrast
+    .table$contrast_expression <- .expr
 
     # # recalculate adj p val on unique tests - estimated by unique t values.
     # .recal <- .table %>%
@@ -109,9 +158,11 @@ run_limma <- function(gct, config, do_impute = TRUE) {
     # )
 
     .table2 <- right_join(gct@rdesc, .table, by = "id")
+    .table2$contrast_expression <- .expr
     return(.table2)
   })
 
+  attr(toptables2, "contrast_expression") <- contrast_lookup
   return(toptables2)
 }
 
@@ -122,14 +173,19 @@ plot_p_dist <- function(df, main_title = ""){
   # Plot raw p-values
   p_values <- df[["P.Value"]]
   p_adjusted <- df[["adj.P.Val"]]
+  raw_hist <- hist(p_values, breaks = 30, plot = FALSE)
+  adj_hist <- hist(p_adjusted, breaks = 30, plot = FALSE)
+  max_count <- max(c(raw_hist$counts, adj_hist$counts), na.rm = TRUE)
+
   hist(
     p_values,
-    breaks = 30,
+    breaks = raw_hist$breaks,
     main = "Raw P-values",
     xlab = "P-value",
     ylab = "Count",
     col = "lightblue",
-    border = "black"
+    border = "black",
+    ylim = c(0, max_count)
   )
 
   mtext(main_title, side = 1, line = -1, outer=T, adj = 0, cex = 0.7)
@@ -138,12 +194,13 @@ plot_p_dist <- function(df, main_title = ""){
   # Plot adjusted p-values
   hist(
     p_adjusted,
-    breaks = 30,
+    breaks = adj_hist$breaks,
     main = "Adjusted P-values",
     xlab = "Adjusted P-value",
     ylab = "Count",
     col = "lightcoral",
-    border = "black"
+    border = "black",
+    ylim = c(0, max_count)
   )
   #mtext(main_title, outer = TRUE, cex = 1.5, line = -1)
 
