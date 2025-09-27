@@ -13,6 +13,17 @@ library(here)
 source(file.path(here(), "R", "lazyloader.R"))
 # util_tools <- get_tool_env("utils")
 
+logging_tools <- tryCatch(get_tool_env("logging"), error = function(e) NULL)
+if (is.null(logging_tools)) {
+  log_info <- function(...) invisible(NULL)
+  log_warn <- function(...) invisible(NULL)
+  log_debug <- function(...) invisible(NULL)
+} else {
+  log_info <- logging_tools$log_info
+  log_warn <- logging_tools$log_warn
+  log_debug <- logging_tools$log_debug
+}
+
 hide_zero <- function(x) {
   sapply(x, function(y) ifelse(y == 0, "", as.character(y)))
 }
@@ -27,8 +38,7 @@ draw_and_save_heatmap <- function(ht_draw_code, outf, gct=NULL, width=NULL, heig
     height <- 7.8
   }
 
-  message(paste0("Drawing heatmap: ", outf))
-  message(paste0("width x height : ", width, " x ", height))
+  log_info("Drawing heatmap", context = list(outf = outf, width = width, height = height))
   tryCatch(
     {
       cairo_pdf(outf, width = width, height = height)
@@ -36,7 +46,7 @@ draw_and_save_heatmap <- function(ht_draw_code, outf, gct=NULL, width=NULL, heig
       dev.off()
     },
     error = function(e) {
-      message("There was a problem drawing the heatmap: ", e$message)
+      log_warn("Heatmap draw failed", context = list(outf = outf, error = e$message))
     }
   )
 }
@@ -657,16 +667,24 @@ make_heatmap_fromgct <- function(
 
   cmeta <- gct@cdesc
   if (!is.null(meta_to_include)) {
-    message("subsetting cmeta by inclusion list")
+    log_debug(
+      "Subsetting column metadata",
+      context = list(action = "include", columns = paste(meta_to_include, collapse = ","))
+    )
     cmeta <- cmeta %>% dplyr::select(any_of(meta_to_include))
   }
   if (!is.null(meta_to_exclude)) {
-    message("subsetting cmeta by exclusion list")
+    log_debug(
+      "Subsetting column metadata",
+      context = list(action = "exclude", columns = paste(meta_to_exclude, collapse = ","))
+    )
     cmeta <- cmeta %>% dplyr::select(-any_of(meta_to_exclude))
   }
   # .colors <- util_tools$create_named_color_list(gct@cdesc, colnames(gct@cdesc))
-  message(meta_to_include)
-  message(colnames(cmeta))
+  log_debug(
+    "Column metadata in use",
+    context = list(columns = paste(colnames(cmeta), collapse = ","))
+  )
   .colors <- util_tools$create_named_color_list(cmeta, colnames(cmeta))
   column_annotations <- ComplexHeatmap::columnAnnotation(
     df = cmeta,

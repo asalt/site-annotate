@@ -4,6 +4,54 @@
 source(file.path("setup_environment.R"))
 source(file.path("lazyloader.R"))
 
+log_tools <- tryCatch(get_tool_env("logging"), error = function(e) NULL)
+if (is.null(log_tools)) {
+  format_ctx <- function(ctx) {
+    if (is.null(ctx) || length(ctx) == 0) {
+      return("")
+    }
+    if (is.null(names(ctx))) {
+      names(ctx) <- rep("", length(ctx))
+    }
+    pieces <- Map(function(name, value) {
+      if (is.list(value)) {
+        value <- unlist(value, recursive = TRUE, use.names = FALSE)
+      }
+      if (length(value) > 1) {
+        value <- paste(value, collapse = ",")
+      }
+      value <- encodeString(as.character(value), quote = "")
+      if (nzchar(name)) {
+        sprintf("%s=%s", name, value)
+      } else {
+        value
+      }
+    }, names(ctx), ctx)
+    paste(unlist(pieces), collapse = " ")
+  }
+  base_logger <- function(level) {
+    function(msg, ..., context = NULL) {
+      if (length(list(...)) > 0) {
+        msg <- sprintf(msg, ...)
+      }
+      ctx <- format_ctx(context)
+      prefix <- sprintf("[site-annotate][%s]", level)
+      message(trimws(paste(prefix, msg, ctx)))
+    }
+  }
+  log_info <- base_logger("INFO")
+  log_debug <- base_logger("DEBUG")
+  log_warn <- base_logger("WARN")
+  log_skip <- base_logger("SKIP")
+  log_error <- base_logger("ERROR")
+} else {
+  log_info <- log_tools$log_info
+  log_debug <- log_tools$log_debug
+  log_warn <- log_tools$log_warn
+  log_skip <- log_tools$log_skip
+  log_error <- log_tools$log_error
+}
+
 cache_tools <- get_tool_env("cache")
 `%cached_by%` <- cache_tools$`%cached_by%`
 
@@ -11,13 +59,16 @@ cache_tools <- get_tool_env("cache")
 
 process_gct_file <- function(gct_file, config) {
   util_tools <- get_tool_env("utils")
+  log_info("Processing GCT file", context = list(file = gct_file))
 
   if (!file.exists(gct_file)) {
+    log_error("GCT file missing", context = list(file = gct_file))
     stop(paste0("File ", gct_file, " does not exist, exiting"))
   }
 
   # Step 1: Load or Parse GCT File
   # gct <- load_or_parse_gct(gct_file)
+  log_debug("Parsing GCT file", context = list(file = gct_file))
   gct <- parse_gctx(gct_file) %cached_by% rlang::hash_file(gct_file)
 
   # if ("species" %in% names(config)){
@@ -25,6 +76,13 @@ process_gct_file <- function(gct_file, config) {
 
   # Step 2: Normalize GCT
   norm_config <- config$norm
+  log_debug(
+    "Normalizing matrix",
+    context = list(
+      mednorm = norm_config$mednorm %||% TRUE,
+      log_transform = norm_config$log_transform %||% TRUE
+    )
+  )
   normed_gct <- util_tools$normalize_gct(gct,
     mednorm = norm_config$mednorm %||% TRUE,
     log_transform = norm_config$log_transform %||% TRUE
@@ -39,13 +97,21 @@ process_gct_file <- function(gct_file, config) {
   ) %cached_by% rlang::hash(c(normed_gct@mat, config$filter$non_zeros %||% 1.0, config$filter$nonzero_subgroup %||% NULL))
 
   result_dim <- dim(filtered_gct@mat)
-  message(paste0("dim ", paste0(as.character(orig_dim), collapse = "x"), " -> ", paste0(as.character(result_dim), collapse = "x")))
+  log_info(
+    "Filtered zero-only rows",
+    context = list(
+      before = paste0(as.character(orig_dim), collapse = "x"),
+      after = paste0(as.character(result_dim), collapse = "x"),
+      threshold = config$filter$non_zeros %||% 1.0
+    )
+  )
 
 
   # Step 4: Apply Batch Correction (if required)
   # need more error checking ehre or inside
   final_gct <- filtered_gct
   if (is.character(config$norm$batch) %||% FALSE) {
+    log_info("Applying ComBat batch correction", context = list(batch = config$norm$batch))
     final_gct <- util_tools$do_combat(filtered_gct, by = config$norm$batch) %cached_by% rlang::hash(c(filtered_gct@mat, config$norm$batch))
     # final_gct <- util_tools$do_limmaremovebatch(filtered_gct, by = config$norm$batch) %cached_by% rlang::hash(c(filtered_gct@mat, config$norm$batch))
   }
@@ -57,7 +123,11 @@ process_gct_file <- function(gct_file, config) {
 exclude_samples <- function(gct, sample_exclude) {
   if (!is.null(sample_exclude)) {
     to_exclude <- intersect(rownames(gct@cdesc), sample_exclude)
-    message(paste0("Excluding ", length(to_exclude), " samples"))
+    if (length(to_exclude) > 0) {
+      log_info("Excluding samples", context = list(count = length(to_exclude)))
+    } else {
+      log_debug("No matching samples found for exclusion", context = list(requested = length(sample_exclude)))
+    }
     to_keep <- setdiff(rownames(gct@cdesc), to_exclude)
     gct <- gct %>% subset_gct(cid = to_keep)
   }
@@ -66,8 +136,12 @@ exclude_samples <- function(gct, sample_exclude) {
 
 load_and_validate_config <- function(config_file, data_dir) {
   io_tools <- get_tool_env("io")
+  log_info("Loading configuration", context = list(file = config_file, data_dir = data_dir %||% "<NA>"))
   config <- io_tools$load_config(config_file, root_dir = data_dir)
-  if (is.null(config)) stop("Config file could not be loaded.")
+  if (is.null(config)) {
+    log_error("Configuration load failed", context = list(file = config_file))
+    stop("Config file could not be loaded.")
+  }
   return(config)
 }
 
@@ -78,6 +152,14 @@ generate_global_heatmaps <- function(gct_z, config, outdir, friendly_name, outna
     cut_by = unique(c(config$heatmap$cut_by %||% NA, NA)),
     cluster_columns = c(TRUE, FALSE),
     stringsAsFactors = FALSE
+  )
+  log_info(
+    "Generating global heatmaps",
+    context = list(
+      combinations = nrow(param_grid),
+      friendly_name = friendly_name,
+      outdir = outdir
+    )
   )
 
   # Step 2: Iterate over parameter grid and generate heatmaps
@@ -104,6 +186,16 @@ generate_global_heatmap <- function(gct_z, cut_by, cluster_columns, config, outd
     pull(id)
 
   gct_z_subset <- gct_z %>% subset_gct(rid = rids_to_keep)
+  log_debug(
+    "Prepared global heatmap subset",
+    context = list(
+      cut_by = ifelse(is.na(cut_by), "<NA>", as.character(cut_by)),
+      cluster_columns = cluster_columns,
+      rows = nrow(gct_z_subset@mat),
+      cols = ncol(gct_z_subset@mat),
+      friendly_name = friendly_name
+    )
+  )
 
   # Generate heatmap code
   heatmap_tools <- get_tool_env("heatmap")
@@ -131,12 +223,17 @@ generate_global_heatmap <- function(gct_z, cut_by, cluster_columns, config, outd
 
   # Skip if file exists and replace is FALSE
   if (file.exists(outf) && config$advanced$replace == FALSE) {
-    message(paste0(outf, " already exists, skipping"))
+    log_skip(
+      "Global heatmap already exists",
+      context = list(outf = outf, replace = config$advanced$replace %||% FALSE)
+    )
     return(NULL)
   }
 
   # Draw and save the heatmap
+  log_info("Rendering global heatmap", context = list(outf = outf))
   heatmap_tools$draw_and_save_heatmap(ht_draw_code, outf, gct_z_subset, width = NULL, height = 11)
+  log_info("Saved global heatmap", context = list(outf = outf))
 }
 
 generate_selection_heatmaps <- function(gct_z, config, outdir, friendly_name = "", outname = "") {
@@ -150,10 +247,18 @@ generate_selection_heatmaps <- function(gct_z, config, outdir, friendly_name = "
     cluster_columns = config$heatmap$selection$cluster_columns %||% config$heatmap$cluster_columns %||% c(TRUE, FALSE),
     stringsAsFactors = FALSE
   )
+  log_info(
+    "Generating selection heatmaps",
+    context = list(
+      combinations = nrow(param_grid),
+      friendly_name = friendly_name,
+      outdir = outdir
+    )
+  )
 
   file_list <- config$heatmap$selection$file_list
   if (is.null(file_list)) {
-    message("No file list provided for selection heatmaps, skipping")
+    log_skip("Selection heatmaps disabled", context = list(reason = "no file list"))
     return(NULL)
   }
 
@@ -163,9 +268,19 @@ generate_selection_heatmaps <- function(gct_z, config, outdir, friendly_name = "
       the_file <- .x
       file_name <- .y
 
+      log_info(
+        "Preparing selection heatmap",
+        context = list(file = the_file, label = file_name)
+      )
+
       # Read and subset GCT
       file_data <- io_tools$read_genelist_file(the_file)
       subgct_z <- gct_z %>% subset_gct(rid = file_data$id %||% file_data[[1]])
+
+      log_debug(
+        "Selection subset dimensions",
+        context = list(file = the_file, rows = nrow(subgct_z@mat), cols = ncol(subgct_z@mat))
+      )
 
       quantiles <- quantile(
         probs = seq(0, 1, 0.025),
@@ -174,7 +289,7 @@ generate_selection_heatmaps <- function(gct_z, config, outdir, friendly_name = "
       heatmap_colorbar_bounds <- c(quantiles[["2.5%"]], quantiles[["97.5%"]])
 
       if (nrow(subgct_z@mat) == 0) {
-        message(paste0("No rows found in ", the_file, ", skipping"))
+        log_skip("Selection heatmap skipped - no rows", context = list(file = the_file))
         return(NULL)
       }
       # if (nrow(subgct_z@mat) > 499) {
@@ -214,8 +329,24 @@ generate_single_selection_heatmap <- function(subgct_z, cut_by, cluster_rows, cl
     cluster_columns = cluster_columns
   )
 
+  log_debug(
+    "Prepared selection heatmap",
+    context = list(
+      outf = outf,
+      file = file_name,
+      cut_by = ifelse(is.na(cut_by), "<NA>", as.character(cut_by)),
+      cluster_rows = cluster_rows,
+      cluster_columns = cluster_columns,
+      rows = nrow(subgct_z@mat),
+      cols = ncol(subgct_z@mat)
+    )
+  )
+
   if (file.exists(outf) && config$advanced$replace == FALSE) {
-    message(paste0(outf, " already exists, skipping"))
+    log_skip(
+      "Selection heatmap already exists",
+      context = list(outf = outf, replace = config$advanced$replace %||% FALSE)
+    )
     return(NULL)
   }
 
@@ -239,6 +370,7 @@ generate_single_selection_heatmap <- function(subgct_z, cut_by, cluster_rows, cl
     save_func = save_func
   )
   # Draw and save the heatmap
+  log_info("Rendering selection heatmap", context = list(outf = outf, file = file_name))
 }
 
 
@@ -251,6 +383,15 @@ run <- function(
     save_env = FALSE,
     here_dir = NULL,
     ...) {
+  log_info(
+    "Starting site-annotate run",
+    context = list(
+      data_dir = data_dir %||% "<NA>",
+      output_dir = output_dir %||% "<NA>",
+      gct_file = gct_file %||% "<NA>",
+      config_file = config_file %||% "<NA>"
+    )
+  )
   # knitr::opts_chunk$set(echo = TRUE)
   # suppressPackageStartupMessages(library(rlang))
   # suppressPackageStartupMessages(library(tidyverse))
@@ -285,8 +426,7 @@ run <- function(
   config_file <- config_file %||% file.path(here(), "config", "base.toml")
   config <- load_and_validate_config(config_file, data_dir)
   # config <- io_tools$load_config(config_file, root_dir = data_dir)
-
-  print(config)
+  log_debug("Configuration sections loaded", context = list(keys = paste(names(config), collapse = ",")))
 
   z_score_flag <- config$heatmap$z_score %||% TRUE
   z_score_by <- config$heatmap$z_score_by %||% config$heatmap$zscore_by %||% NULL
@@ -297,9 +437,14 @@ run <- function(
   }
   gct <- process_gct_file(gct_file, config)
   gct <- exclude_samples(gct, config$extra$sample_exclude)
+  log_info(
+    "GCT ready",
+    context = list(rows = nrow(gct@mat), cols = ncol(gct@mat))
+  )
 
   .outdir <- file.path(OUTDIR, "export")
   if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
+  log_info("Writing export GCT", context = list(outdir = .outdir))
   gct %>% write_gct(file.path(.outdir, "export"))
 
   # ==========================================
@@ -357,7 +502,7 @@ run <- function(
       if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
       if (!file.exists(.outname) || config$advanced$replace == TRUE) {
         .table %>% write_tsv(.outname)
-        message(paste0("wrote ", .outname))
+        log_info("Wrote LIMMA table", context = list(file = .outname))
       }
 
       .outname <- file.path(.outdir, make.names(paste0(OUTNAME, .contrast, "_pdist.png")))
@@ -367,7 +512,7 @@ run <- function(
         dev.off()
         #
 
-        message(paste0("wrote ", .outname))
+        log_info("Wrote LIMMA plot", context = list(file = .outname))
       }
     })
 
@@ -454,9 +599,12 @@ run <- function(
           )
         )
 
-        message(paste0("drawing ", .outf))
+        log_info("Rendering LIMMA heatmap", context = list(outf = .outf))
         if (file.exists(.outf) && config$advanced$replace == FALSE) {
-          message(paste0(.outf, " already exists, skipping"))
+          log_skip(
+            "LIMMA heatmap already exists",
+            context = list(outf = .outf, replace = config$advanced$replace %||% FALSE)
+          )
           return(NULL)
         }
         tryCatch(
@@ -531,9 +679,12 @@ run <- function(
             height <- 6 + (.nrow * .20)
             width <- 12 + (.ncol * .26)
 
-            message(paste0("drawing ", .outf))
+            log_info("Rendering LIMMA subset heatmap", context = list(outf = .outf))
             if (file.exists(.outf) && config$advanced$replace == FALSE) {
-              message(paste0(.outf, " already exists, skipping"))
+              log_skip(
+                "LIMMA subset heatmap already exists",
+                context = list(outf = .outf, replace = config$advanced$replace %||% FALSE)
+              )
               return(NULL)
             }
             tryCatch(
@@ -625,4 +776,7 @@ run <- function(
       # comparisons <- io_tools$match_comparisons(sitediff_dir, total_protein_dir)
     }
   }
-} # end of run
+
+  log_info("site-annotate run complete", context = list(outdir = OUTDIR))
+}
+# end of run

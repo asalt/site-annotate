@@ -39,19 +39,31 @@ setup_environment <- function(
       "tibble", "grid",
       "RColorBrewer", "here"
     )) {
+  log_tools <- tryCatch(get_tool_env("logging"), error = function(e) NULL)
+  if (is.null(log_tools)) {
+    log_info <- function(...) invisible(NULL)
+    log_warn <- function(...) invisible(NULL)
+    log_error <- function(...) invisible(NULL)
+  } else {
+    log_info <- log_tools$log_info
+    log_warn <- log_tools$log_warn
+    log_error <- log_tools$log_error
+  }
+
+  log_info("Initializing R environment", context = list(db_path = db_path, packages = length(packages_to_load)))
   source("cache.R")
   con <- initialize_cache_db(db_path, close = FALSE)
   # con <- initialize_cache_db(db_path, close = T)
   # con <- NULL
 
   for (package in packages_to_load) {
-    message(paste("Processing package:", package))
+    log_info("Loading package", context = list(package = package))
     tryCatch(
       {
         handle_package_cache(package, db_path, con = con)
       },
       error = function(e) {
-        message(paste("Failed to process package:", package, "-", e$message))
+        log_warn("Failed to cache package", context = list(package = package, error = e$message))
       }
     )
   }
@@ -60,7 +72,7 @@ setup_environment <- function(
   loaded_pkgs <- .packages()
   for (pkg in packages_to_load) {
     if (!(pkg %in% loaded_pkgs)) {
-      message(paste("Package", pkg, "not loaded."))
+      log_error("Package failed to load", context = list(package = pkg))
       stop()
     }
   }
@@ -70,8 +82,8 @@ setup_environment <- function(
   # close the connection
   if (!is.null(con)) {
     DBI::dbDisconnect(con)
-    message("Connection closed.")
+    log_info("Closed cache connection", context = list(db_path = db_path))
   }
 
-  message("Environment setup complete.")
+  log_info("Environment setup complete", context = list(packages_loaded = length(packages_to_load)))
 }
