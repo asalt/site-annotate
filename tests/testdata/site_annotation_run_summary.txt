@@ -1,0 +1,6 @@
+site-annotate run summary
+psm: ./tests/testdata/57013_1_4_psms_all.tsv
+fasta: /mnt/e/reference_databases/GENCODE_grouper_compat/out202505/GENCODE.hsV42.combined_entrezgene.fa
+aligned_rows: 115769
+mods_in_psm_columns: k_42_0106, m_15_9949, sty_79_9663
+uniprot_non_null: 0

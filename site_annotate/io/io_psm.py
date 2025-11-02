@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..constants import RENAME, RENAME_SHORT
 from ..constants import VALID_MODI_COLS, POSSIBLE_SITE_ID_COLS
+from ..constants import allowed_residues_for_col
 from ..utils import data_generator
 
 logger = logging.getLogger(__name__)
@@ -279,6 +280,26 @@ def _populate_mod_columns(df: pd.DataFrame) -> None:
     if unknown_codes:
         logger.debug("Unmapped UniMod codes encountered: %s", ", ".join(sorted(unknown_codes)))
 
+    def _filter_site_probs_for_allowed(text, allowed):
+        if pd.isna(text):
+            return pd.NA
+        s = str(text)
+        if not allowed:
+            return s
+        # Replace letter(prob) for disallowed residues with just the letter (no parentheses)
+        def repl(m):
+            aa = m.group(1)
+            prob = m.group(2)
+            if aa in allowed:
+                return f"{aa}({prob})"
+            # Preserve zero-prob tokens for compatibility; drop only non-zero disallowed tokens
+            try:
+                p = float(prob)
+            except Exception:
+                p = 0.0
+            return f"{aa}({prob})" if p == 0.0 else aa
+        return re.sub(r"([A-Za-z])\(([0-9]*\.?[0-9]+)\)", repl, s)
+
     for unimod, column in UNIMOD_TO_MOD_COLUMN.items():
         mask = unimod_lists.apply(lambda codes: unimod in codes if codes else False)
         if not mask.any():
@@ -287,9 +308,11 @@ def _populate_mod_columns(df: pd.DataFrame) -> None:
         if column not in df.columns:
             df[column] = pd.NA
 
-        assign_mask = mask & sanitized.notna()
+        allowed = allowed_residues_for_col(column)
+        filtered_series = sanitized.apply(lambda t: _filter_site_probs_for_allowed(t, allowed))
+        assign_mask = mask & filtered_series.notna()
         if assign_mask.any():
-            df.loc[assign_mask & df[column].isna(), column] = sanitized[assign_mask]
+            df.loc[assign_mask & df[column].isna(), column] = filtered_series[assign_mask]
 
         best_col = f"{column}_best_localization"
         if best_col not in df.columns:

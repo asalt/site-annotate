@@ -1,8 +1,16 @@
 suppressPackageStartupMessages(library(limma))
 suppressPackageStartupMessages(library(here))
 
-source(file.path(here("R", "lazyloader.R")))
+sys.source(file.path(here::here("R", "lazyloader.R")), envir = environment())
 util_tools <- get_tool_env("utils")
+
+# Make common test variables visible in this environment when sourced via sys.source
+if (!exists("gct", envir = environment()) && exists("gct", envir = .GlobalEnv)) {
+  assign("gct", get("gct", envir = .GlobalEnv), envir = environment())
+}
+if (!exists("config", envir = environment()) && exists("config", envir = .GlobalEnv)) {
+  assign("config", get("config", envir = .GlobalEnv), envir = environment())
+}
 
 
 impute_with_draw <- function(values, seed = 123, mean_adjust = -1.8, sd_adjust = 0.8) {
@@ -124,7 +132,7 @@ run_limma <- function(gct, config, do_impute = TRUE) {
   contrast_exprs <- contrast_defs$expression
   contrasts <- makeContrasts(contrasts = contrast_exprs, levels = mod)
   colnames(contrasts) <- contrast_defs$label
-  contrast_lookup <- setNames(contrast_defs$expression, contrast_defs$label)
+  contrast_lookup <- structure(contrast_defs$expression, names = contrast_defs$label)
 
   fit <- limma::lmFit(.mat, mod)
   fit <- contrasts.fit(fit, contrasts)

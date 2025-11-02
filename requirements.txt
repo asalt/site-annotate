@@ -10,3 +10,4 @@ sqlitedict
 
 mygene
 pyfaidx
+jinja2

@@ -3,12 +3,17 @@ suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(fs))
 suppressPackageStartupMessages(library(purrr))
 suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(magrittr))
 
 # Only define get_tool_env if it doesn't already exist
 if (!exists("get_tool_env", envir = .GlobalEnv)) {
   get_tool_env <- local({
-    # all_tools <- file.path(here("R"), list.files(here("R"), pattern = "\\.R$", full.names = FALSE))
-    all_tools <- fs::dir_ls(path=here("R"), glob = "*.R") %>% map(basename) %>% flatten_chr() %>% str_remove(".R")
+    # Resolve R tooling directory with a robust fallback
+    root_R_dir <- tryCatch(here::here("R"), error = function(e) "R")
+    # Build tool list without relying on magrittr pipes or here() at call sites
+    files <- fs::dir_ls(path = root_R_dir, glob = "*.R")
+    all_tools <- basename(files)
+    all_tools <- gsub("\\.R$", "", all_tools)
 
     print(getwd())
     print(all_tools)
@@ -17,7 +22,8 @@ if (!exists("get_tool_env", envir = .GlobalEnv)) {
     #heatmap.R  io.R  lazyloader.R  reduce.R  summarize_rmd.R  utils.R
 
     # Initialize cache with empty environments
-    tools_cache <- setNames(vector("list", length(all_tools)), all_tools)
+    tools_cache <- vector("list", length(all_tools))
+    names(tools_cache) <- all_tools
     for (tool_name in all_tools) {
       tools_cache[[tool_name]] <- new.env()
     }
@@ -44,7 +50,7 @@ if (!exists("get_tool_env", envir = .GlobalEnv)) {
       tools_loading <<- c(tools_loading, tool_name)
 
       # Source the tool file into its environment
-      src_dir <- file.path(here("R"))
+      src_dir <- root_R_dir
       source_file <- paste0(tool_name, ".R")
       full_path <- file.path(src_dir, source_file)
       if (!file.exists(full_path)) {
@@ -74,3 +80,9 @@ if (!exists("get_tool_env", envir = .GlobalEnv)) {
   assign("get_tool_env", get_tool_env, envir = .GlobalEnv)
 }
 
+# Also ensure get_tool_env is bound in the current sourcing environment
+if (!exists("get_tool_env", envir = environment())) {
+  if (exists("get_tool_env", envir = .GlobalEnv)) {
+    assign("get_tool_env", get("get_tool_env", envir = .GlobalEnv), envir = environment())
+  }
+}

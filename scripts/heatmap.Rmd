@@ -16,7 +16,7 @@ params:
   metadata: NULL
   config: "None"  # from python. make all the NULLs "None"?
   gct: NULL # not always used
-  save_environ: false
+  save_env: false
 ---
 
 <style type="text/css">
@@ -45,12 +45,17 @@ myreactable <- function(x, ...) reactable(x, defaultPageSize = 14, searchable = 
 
 (here())
 
+```
+
+```{r, label='load-tools'}
 source(file.path(here("R", "lazyloader.R")))
 io_tools <- get_tool_env("io")
 util_tools <- get_tool_env("utils")
-
 OUTDIR <- params$output_dir %||% params$data_dir %||% "."
 config_file <- params$config %||% file.path(here(), "config", "base.toml")
+```
+
+```{r, label='load-params'}
 config <- io_tools$load_config(config_file, root_dir = params$root_dir)
 
 # dist_no_na <- util_tools$dist_no_na
@@ -58,29 +63,38 @@ config <- io_tools$load_config(config_file, root_dir = params$root_dir)
 
 # more fine grained params with defaults and validation
 
-knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures/"))
+# knitr::opts_chunk$set(fig.path=file.path(OUTDIR, "modi-figures/"))
 
-SAVE_ENVIRON <- params$save_environ %||% FALSE
+SAVE_ENV <- params$save_env %||% FALSE
 
 ```
 create heatmap from input files
 very simple, only does one thing
 
-
 # load
-
 
 
 ```{r, label='load-gct'}
 
-if (!is.null(params$gct)){
-    gct <- cmapR::parse_gctx(params$gct)
+gct_file <- params$gct %||% config$gct_file
+
+if (!is.null(gct_file)){
+    gct <- cmapR::parse_gctx(gct_file)
 } else {
   cat("no data passed, exiting")
   knitr::knit_exit()
 }
 
-OUTNAME <- basename(params$gct) %>% gsub("_n\\d+x\\d+\\.gct", "", .)
+if (!is.null(config$extra$sample_exclude)) {
+  to_exclude <- config$extra$sample_exclude %||% NULL
+  to_exclude <- intersect(rownames(gct@cdesc), to_exclude)
+  message(paste0("excluding ", length(to_exclude), " samples"))
+  to_keep <- setdiff(rownames(gct@cdesc), to_exclude)
+  gct <- gct %>% subset_gct(cid = to_keep)
+}
+
+
+OUTNAME <- basename(gct_file) %>% gsub("_n\\d+x\\d+\\.gct", "", .)
 
 ```
 
@@ -88,7 +102,11 @@ OUTNAME <- basename(params$gct) %>% gsub("_n\\d+x\\d+\\.gct", "", .)
 gct@cdesc %>% myreactable
 ```
 
-# explore
+# plot heatmaps
+
+```{r}
+gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by)
+```
 
 ## heatmap
 
@@ -122,10 +140,10 @@ draw_heatmap <- function(...){
 }
 ```
 
+
 ```{r, label='draw-heatmaps'}
 
 
-gct_z <- util_tools$scale_gct(gct, group_by = config$heatmap$zscore_by)
 
 
 param_grid <- expand.grid(
@@ -167,7 +185,7 @@ config$heatmap$selection$file_list %>%
     file_data %>% purrr::imap(~{
       file_data_name <- .y
       subname <- paste0(name, "_", file_data_name)
-      column_title <- paste0(OUTNAME, "\ncontrast: ", subname)
+      column_title <- paste0(OUTNAME, "\n", subname)
       file_data_val <- .x
 
       param_grid %>% purrr::pmap(~{
@@ -176,12 +194,23 @@ config$heatmap$selection$file_list %>%
         cluster_columns_val <- ..3
         top_n_val <- ..4
 
+        # print(file_data_val)
+        print(paste0('\\ntop n val ', top_n_val))
+
         subsel <- file_data_val # unless we want to filter further by possible column values
-        if ("t_value" %in% colnames(file_data_val)){
-          .top_tvals <- file_data_val %>% distinct(t_value) %>% head(n = top_n_val) %>% pull(t_value)
-          subsel <- file_data_val %>% filter(t_value %in% .top_tvals)
+        # if ("t_value" %in% colnames(file_data_val)){
+        if (length(colnames(file_data_val)) > 1 && (is.numeric(file_data_val[[2]]))){
+
+          .top_vals <- util_tools$select_top_n(
+                data = file_data_val,
+                sort_column = colnames(file_data_val)[[2]],
+                top_n = top_n_val,
+                sort_order = "desc")
+          # .top_tvals <- file_data_val %>% distinct(t_value) %>% head(n = top_n_val) %>% pull(t_value)
+          print(.top_vals)
+          subsel <- .top_vals
+          # subsel <- file_data_val[ file_data_val[[1]] %in% .top_vals[,1], ] #%>% filter(.data[[1]] %in% .top_vals[,1])
         }
-        print(file_data_val)
 
 
         if (nrow(subsel) == 0){
@@ -193,15 +222,23 @@ config$heatmap$selection$file_list %>%
         .nrow <- nrow(subgct_z@mat)
         .ncol <- ncol(subgct_z@mat)
         .outdir <- file.path(OUTDIR, "heatmaps")
-        if (!is.null(cut_by_val)) .outdir <- file.path(.outdir, paste0('cut_',cut_by_val))
+        if (!is.null(cut_by_val)){
+             .outdir <- file.path(.outdir, paste0('cut_',make.names(cut_by_val)))
+        }
         if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
-        .outf <- file.path(.outdir, make.names(paste0(OUTNAME, 
+        .outf <- file.path(.outdir, make.names(paste0(OUTNAME,
          subname, "_",
           .nrow, 'x', .ncol,
           "_cut_", cut_by_val,
           "cr_", cluster_rows_val,
           "cc_", cluster_columns_val,
+           ifelse( !is.null(config$heatmap$zscore_by), config$heatmap$zscore_by, ""),
             ".pdf")))
+
+        if (!is.null(cut_by_val)){
+             if (grepl(":", cut_by_val)) cut_by_val <- unlist(strsplit(as.character(cut_by_val), ":"))
+        }
+
 
         ht_draw_code <- heatmap_tools$make_heatmap_fromgct(
           gct = subgct_z,
@@ -209,12 +246,10 @@ config$heatmap$selection$file_list %>%
           cut_by = cut_by_val,
           cluster_rows = cluster_rows_val,
           cluster_columns = cluster_columns_val,
-          # cut_by = config$heatmap$cut_by %||% NULL,
-          # cluster_rows = config$heatmap$cluster_rows %||% TRUE,
-          # cluster_columns = config$heatmap$cluster_columns %||% FALSE,
           meta_to_include = config$heatmap$legend_include %||% NULL,
           meta_to_exclude = config$heatmap$legend_exclude %||% NULL,
           show_row_names = TRUE,
+          include_row_annotations = TRUE,
           optimal_size = TRUE
           )
         height <- 6 + (.nrow * .20)
@@ -241,8 +276,71 @@ config$heatmap$selection$file_list %>%
   })
 ```
 
+```{r, label='heatmap-of-everything'}
+# heatmap of everything
+
+
+param_grid <- expand.grid(
+  cut_by = config$heatmap$cut_by %||% NULL,
+  cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+  cluster_columns = config$heatmap$cluster_columns %||% FALSE
+  )
+
+param_grid %>% purrr::pmap(~{
+  cut_by_val <- ..1
+  cluster_rows_val <- ..2
+  cluster_columns_val <- ..3
+
+  ht_draw_code <- heatmap_tools$make_heatmap_fromgct(
+    gct = gct_z,
+    column_title = "everything",
+    cut_by = cut_by_val,
+    cluster_rows = cluster_rows_val,
+    cluster_columns = cluster_columns_val,
+    # cut_by = config$heatmap$cut_by %||% NULL,
+    # cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+    # cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+    meta_to_include = config$heatmap$legend_include %||% NULL,
+    meta_to_exclude = config$heatmap$legend_exclude %||% NULL,
+    show_row_names = FALSE,
+    include_row_annotations = FALSE,
+    optimal_size = FALSE
+    )
+  height <- 9
+  width <- 11
+
+  .outdir <- file.path(OUTDIR, "heatmaps")
+  if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
+  .outf <- file.path(.outdir, make.names(paste0(OUTNAME,
+    "_",
+    nrow(gct_z@mat), 'x', ncol(gct_z@mat),
+    "_cut_", cut_by_val,
+    "cr_", cluster_rows_val,
+    "cc_", cluster_columns_val,
+     ifelse( !is.null(config$heatmap$zscore_by), config$heatmap$zscore_by, ""),
+      ".pdf")))
+
+  message(paste0('drawing ', .outf))
+  if (file.exists(.outf) && config$advanced$replace == FALSE){
+    message(paste0(.outf, " already exists, skipping"))
+    return(NULL)
+  }
+  tryCatch(
+    {
+      cairo_pdf(.outf, width = width, height = height)
+      ht_draw_code()
+      dev.off()
+    },
+    error = function(e) stop(e)
+  )
+})
+
+```
+
+
+
 ```{r, label = 'end'}
-if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'heatmap_draw.RData'))
+if (SAVE_ENV) save.image(file.path(OUTDIR$data_dir, 'heatmap_draw.RData'))
 
 (loadedNamespaces())
 (version)

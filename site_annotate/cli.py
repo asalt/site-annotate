@@ -28,6 +28,11 @@ from . import log
 from .io import io
 from . import io_external
 from .io.io import get_reader, validate_metadata, load_and_validate_files
+from .io.io import read_gct
+from .io.io import write_gct as write_gct_file, write_excel as write_excel_file
+from .compare import compute_site_vs_protein, generate_gene_heatmaps
+from .constants import get_all_columns
+from . import misc
 from . import modisite
 from .utils import data_generator
 
@@ -36,6 +41,7 @@ from .runner import run_pipeline
 from . import mapper
 from . import reduce
 from . import tasks
+from .tasks import maybe_compile_latex, compile_latex_from_template, maybe_ollama_summarize
 
 logger = log.get_logger(__file__)
 
@@ -78,6 +84,15 @@ def get_templates(TEMPLATE_PATH):
 REPORT_TEMPLATES = get_templates(TEMPLATE_PATH)
 
 
+# Deprecated flag support: --uniprot-check -> --refresh-uniprot
+def _deprecated_uniprot_check(ctx, param, value):
+    if value:
+        logger.warning("--uniprot-check is deprecated; use --refresh-uniprot")
+        # ensure the new flag reflects this
+        ctx.params["refresh_uniprot"] = True
+    return None
+
+
 def prepare_params(
     template, config, data_dir, output_dir, metadata, gct, root_dir, save_env
 ):
@@ -113,6 +128,43 @@ def prepare_params(
         logger.info(f"Wrote validated metadata: {validated_meta_path}")
 
     return params_dict
+
+
+def _summarize_dry_run(meta_df: pd.DataFrame, found: dict, mappings: dict) -> str:
+    lines = []
+    lines.append("DRY-RUN SUMMARY")
+    lines.append("")
+    lines.append(f"metadata rows: {len(meta_df)}")
+    lines.append(f"distinct rec_run_search: {meta_df['rec_run_search'].nunique()}")
+    lines.append("")
+
+    all_rrs = sorted(meta_df["rec_run_search"].unique())
+    missing_rrs = [rrs for rrs in all_rrs if not found.get(rrs)]
+    if missing_rrs:
+        lines.append(f"missing data files for: {', '.join(missing_rrs)}")
+    else:
+        lines.append("all rec_run_search have at least one matching data file")
+
+    lines.append("")
+    for rrs in all_rrs:
+        files = found.get(rrs) or []
+        lines.append(f"[ {rrs} ] found files: {len(files)}")
+        for f in files:
+            m = mappings.get((rrs, f))
+            if not m:
+                lines.append(f"  - {os.path.basename(f)} : no label mapping (no labels provided?)")
+                continue
+            expected = len(m)
+            matched = sum(1 for v in m.values() if v)
+            missing = [k for k, v in m.items() if not v]
+            lines.append(
+                f"  - {os.path.basename(f)} : mapped {matched}/{expected} labels"
+            )
+            if missing:
+                lines.append(f"      missing: {', '.join(missing)}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 @main.command()
@@ -502,6 +554,67 @@ def add_experiment_annotation(experiment_annotation, target):
         )
 
 
+@main.command(name="dry-run")
+@click.option("-m", "--metadata", type=click.Path(exists=True, dir_okay=False), required=True)
+@click.option("-d", "--data-dir", type=click.Path(exists=True, file_okay=False, dir_okay=True), required=True)
+@click.option("-o", "--output-dir", type=click.Path(exists=False, file_okay=False, dir_okay=True), default=None, show_default=True)
+@click.option("-t", "--threshold", type=int, default=97, show_default=True, help="Fuzzy match confidence threshold")
+@click.option("--latex/--no-latex", is_flag=True, default=False, show_default=True, help="Attempt to write a PDF summary if LaTeX is available")
+def dry_run(metadata, data_dir, output_dir, threshold, latex):
+    """
+    Preview metadata and expression file alignment, and summarize label-to-column mapping.
+    Writes a text summary; optionally compiles a PDF if lualatex/pdflatex is available.
+    """
+    data_dir = pathlib.Path(data_dir).absolute()
+    metadata_path = pathlib.Path(metadata).absolute()
+    if output_dir is None:
+        output_dir = data_dir
+    outdir = pathlib.Path(output_dir).absolute()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Load and standardize metadata
+    reader = io.get_reader(str(metadata_path))
+    meta_df = reader(metadata_path, dtype={"label": "str"})
+    meta_df = io.validate_metadata(meta_df)
+
+    rec_run_searches = meta_df.rec_run_search.unique().tolist()
+    found = io.find_expr_files(rec_run_searches, str(data_dir))
+
+    # For each found file, attempt label mapping
+    mappings = {}
+    for rrs, files in found.items():
+        if not files:
+            continue
+        meta_rrs = meta_df[meta_df.rec_run_search == rrs]
+        if "label" not in meta_rrs.columns or meta_rrs["label"].isna().all():
+            for f in files:
+                mappings[(rrs, f)] = None
+            continue
+
+        labels = meta_rrs["label"].dropna().astype(str).tolist()
+        for f in files:
+            try:
+                df_head = get_reader(f)(f, nrows=5)
+            except Exception:
+                mappings[(rrs, f)] = {lab: None for lab in labels}
+                continue
+            # use fuzzy matching helper
+            m = match_columns(labels, df_head, threshold=threshold)
+            mappings[(rrs, f)] = m
+
+    summary = _summarize_dry_run(meta_df, found, mappings)
+    txt_path = outdir / "dry_run_summary.txt"
+    txt_path.write_text(summary)
+    click.echo(f"Wrote summary: {txt_path}")
+
+    if latex:
+        pdf_path = maybe_compile_latex(summary, str(outdir), basename="dry_run_summary", title="site-annot dry-run")
+        if pdf_path:
+            click.echo(f"Wrote PDF: {pdf_path}")
+        else:
+            click.echo("LaTeX engine not available or failed; skipped PDF.")
+
+
 @main.command()
 @common_options
 @click.option(
@@ -709,25 +822,40 @@ def reduce_sites(output_dir, data_dir, modi_abbrev, **kwargs):
     help="prefix to append to beginning of files",
 )
 @click.option(
-    "--uniprot-check/--no-uniprot-check", default=False, show_default=True, is_flag=True
+    "--refresh-uniprot/--no-refresh-uniprot",
+    default=False,
+    show_default=True,
+    is_flag=True,
+    help="Perform an additional UniProt refresh pass (cache/online if available). Initial mapping from PSM/FASTA/cache always runs.",
+)
+@click.option(
+    "--uniprot-check/--no-uniprot-check",
+    is_flag=True,
+    default=False,
+    expose_value=False,
+    callback=_deprecated_uniprot_check,
+    help="DEPRECATED: use --refresh-uniprot",
 )
 @click.option(
     "-f", "--fasta", type=click.Path(exists=True, dir_okay=False), help="fasta file"
 )
-def run(cores, psms, output_dir, prefix, uniprot_check, fasta):
+def run(cores, psms, output_dir, prefix, refresh_uniprot, fasta):
     """
-    this is the main code for compiling site-level expression matrix from from PSMs table from FragPipe.
-    for each modi of interest there should be a column of form `aas_mass_shift`.
-    So for phospho a column of form `sty_79_9663`
+    Build site-level tables from a PSM file and a FASTA.
 
-    critical columns include:
-        - spectrum
-        - sty_79_9663
-        - sty_79_9663_best_localization
-    ...
+    - Parses site probabilities into per-mod DataFrames (e.g., sty_79_9663, m_15_9949).
+    - Aligns proteins to FASTA headers; keeps uniprot_id in reduced outputs.
+    - UniProt mapping sources (in order): Protein.Ids, ENSP (cache/online),
+      geneid (Entrez), symbol (human), ENSG, ENST. Use --refresh-uniprot to enable
+      online lookups; otherwise cached/offline fills only.
+    - Writes both reduced and PSP-mapped files; mapped uses UniProt+15mer or
+      symbol+15mer when UniProt is missing.
     """
-    if not os.path.exists(str(output_dir)):
-        os.makedirs(str(output_dir))
+    if output_dir is not None:
+        outdir_path = pathlib.Path(output_dir)
+        outdir_path.mkdir(parents=True, exist_ok=True)
+    else:
+        outdir_path = None
     if not psms:
         logger.warning("Warning: No PSM files provided.")
         return
@@ -735,8 +863,47 @@ def run(cores, psms, output_dir, prefix, uniprot_check, fasta):
         logger.error("more than 1 psms not supported yet")
         raise NotImplementedError("more than 1 psms not supported yet")
 
-    df, fasta_data, fa_psp_ref = load_and_validate_files(psms[0], fasta, uniprot_check)
+    logger.info("Loading and validating inputs…")
+    df, fasta_data, fa_psp_ref = load_and_validate_files(psms[0], fasta, refresh_uniprot)
+    logger.info("Aligned PSM rows: %d", len(df))
+    logger.info("Running site extraction across proteins (cores=%s)…", cores)
     fullres = run_pipeline(df, fasta_data, fa_psp_ref, cores)
+    if not fullres:
+        # Produce a summary and a placeholder output instead of exiting silently
+        logger.error(
+            "No site-level results produced. Check that PSMs contain modification columns (e.g., sty_79_9663) and that protein IDs align to FASTA keys."
+        )
+        # Write a brief run summary to the chosen outdir or PSM folder
+        base_dir = outdir_path if outdir_path is not None else pathlib.Path(psms[0]).parent
+        base_dir.mkdir(parents=True, exist_ok=True)
+        summary = base_dir / f"{prefix or ''}site_annotation_run_summary.txt"
+        mods_present = sorted(get_all_columns(df.columns))
+        with open(summary, "w") as h:
+            h.write("site-annotate run summary\n")
+            h.write(f"psm: {psms[0]}\n")
+            h.write(f"fasta: {fasta}\n")
+            h.write(f"aligned_rows: {len(df)}\n")
+            h.write(f"mods_in_psm_columns: {', '.join(mods_present) if mods_present else 'none'}\n")
+            if "uniprot_id" in df.columns:
+                h.write(f"uniprot_non_null: {int(df['uniprot_id'].notna().sum())}\n")
+        # Fallback: write basic per-mod site tables without requiring FASTA alignment
+        mods = [m for m in mods_present if m in df.columns and df[m].notna().any()]
+        if mods:
+            logger.info("Writing basic per-mod outputs without FASTA alignment")
+            basic = {}
+            for col in mods:
+                res = misc.extract_and_transform_data(df, col)
+                if res is None or res.empty:
+                    continue
+                merged = res.merge(df, left_on="original_index", right_index=True)
+                # Minimal ordering: peptide, protein, AA, position_relative, prob + useful IDs
+                keep = [x for x in ("peptide","protein","AA","position_relative","prob","modified_peptide","spectrum","intensity","uniprot_id","ENSP","ENST","ENSG","geneid","symbol") if x in merged.columns]
+                basic[col] = merged[keep]
+            if basic:
+                save_results(basic, psms[0], name="site_annotation_basic_no_fasta", prefix=prefix, outdir=base_dir)
+                logger.info("Wrote basic per-mod outputs (no FASTA alignment)")
+        logger.info(f"Wrote summary: {summary}")
+        return
     # type fullres is list of dicts
     # fullres[0].keys()
     # dict_keys(['sty_79_9663'])
@@ -758,6 +925,27 @@ def run(cores, psms, output_dir, prefix, uniprot_check, fasta):
     #     'TMT_132_C_intensity', 'TMT_133_N_intensity', 'TMT_133_C_intensity', 'TMT_134_N_intensity', 'highest_prob'],
     #     dtype='object')
     finalres = process_results(fullres, decoy_label="rev_")
+    if not finalres:
+        logger.error("No results after postprocessing; nothing to write")
+        base_dir = outdir_path if outdir_path is not None else pathlib.Path(psms[0]).parent
+        base_dir.mkdir(parents=True, exist_ok=True)
+        summary = base_dir / f"{prefix or ''}site_annotation_run_summary.txt"
+        mods_present = sorted(get_all_columns(df.columns))
+        with open(summary, "w") as h:
+            h.write("site-annotate run summary\n")
+            h.write(f"psm: {psms[0]}\n")
+            h.write(f"fasta: {fasta}\n")
+            h.write(f"aligned_rows: {len(df)}\n")
+            h.write(f"mods_in_psm_columns: {', '.join(mods_present) if mods_present else 'none'}\n")
+            if "uniprot_id" in df.columns:
+                h.write(f"uniprot_non_null: {int(df['uniprot_id'].notna().sum())}\n")
+        placeholder = base_dir / f"{prefix or ''}site_annotation_NO_RESULTS.txt"
+        with open(placeholder, "w") as h:
+            h.write("No site-level results after postprocessing (e.g., only decoys). See run summary for details.\n")
+        logger.info(f"Wrote summary: {summary}")
+        logger.info(f"Wrote placeholder: {placeholder}")
+        return
+    logger.info("Mods with results: %s", ", ".join(sorted(finalres.keys())))
     # finalres is a dict with keys modi ( sty_79_9663, k_42_0106, ... )
     # and values the concatenated dataframe of all sites, along with tmt quant if applicable
     # this "not reduced" file can be huge ( 15g + )
@@ -768,17 +956,52 @@ def run(cores, psms, output_dir, prefix, uniprot_check, fasta):
         decoy_label="rev_",
     )
 
-    save_results(site_reduced, psms[0], name="site_annotation_reduced", prefix=prefix)
+    save_results(site_reduced, psms[0], name="site_annotation_reduced", prefix=prefix, outdir=outdir_path)
 
     site_reduced_mapped = mapper.add_annotations(site_reduced)
-    save_results(
-        site_reduced_mapped,
-        psms[0],
-        name="site_annotation_reduced_mapped",
-        prefix=prefix,
-    )
+    save_results(site_reduced_mapped, psms[0], name="site_annotation_reduced_mapped", prefix=prefix, outdir=outdir_path)
+
+    # Doctor summary: write a concise run report and log it
+    try:
+        summary_path = _write_doctor_summary(df, site_reduced, site_reduced_mapped, outdir_path or pathlib.Path(psms[0]).parent, fasta)
+        logger.info("Wrote run summary: %s", summary_path)
+    except Exception as exc:
+        logger.warning("Failed to write run summary: %s", exc)
 
     return
+
+
+def _write_doctor_summary(df, site_reduced, site_reduced_mapped, outdir: pathlib.Path, fasta_path: str) -> pathlib.Path:
+    outdir.mkdir(parents=True, exist_ok=True)
+    lines = []
+    lines.append("site-annotate doctor summary")
+    lines.append("")
+    lines.append(f"aligned_rows: {len(df)}")
+    uni_nonnull = int(df['uniprot_id'].notna().sum()) if 'uniprot_id' in df.columns else 0
+    lines.append(f"uniprot_non_null_psm: {uni_nonnull}")
+    # Per-mod stats for reduced
+    lines.append("")
+    lines.append("per-mod reduced stats:")
+    for mod, rdf in sorted(site_reduced.items()):
+        total = len(rdf)
+        nonnull = int(rdf['uniprot_id'].notna().sum()) if 'uniprot_id' in rdf.columns else 0
+        lines.append(f"  {mod}: rows={total}, uniprot_non_null={nonnull}")
+    # Per-mod stats for mapped
+    lines.append("")
+    lines.append("per-mod mapped stats:")
+    for mod, mdf in sorted(site_reduced_mapped.items()):
+        total = len(mdf)
+        uni_non = int(mdf['uniprot_id'].notna().sum()) if 'uniprot_id' in mdf.columns else 0
+        acc_non = int(mdf['acc_id'].notna().sum()) if 'acc_id' in mdf.columns else 0
+        lines.append(f"  {mod}: rows={total}, uniprot_non_null={uni_non}, psp_acc_non_null={acc_non}")
+    # PSP data presence
+    lines.append("")
+    lines.append(f"fasta: {fast a_path}")
+    lines.append(f"psp_dir: {io_external.data_dir}")
+    # Write file
+    summary = outdir / "site_annotation_run_summary.txt"
+    summary.write_text("\n".join(lines))
+    return summary
 
 
 def process_results(fullres, decoy_label="rev_"):
@@ -804,12 +1027,299 @@ def process_results(fullres, decoy_label="rev_"):
     return finalres
 
 
-def save_results(finalres, input_file, name="site_annotation_notreduced", prefix=None):
+def save_results(finalres, input_file, name="site_annotation_notreduced", prefix=None, outdir: pathlib.Path | None = None):
     if prefix is None:
         prefix = ""
     infile = pathlib.Path(input_file)
     for key, val in finalres.items():
-        # outfile = infile.parent / f"{key}_site_annotation_notreduced.tsv"
-        outfile = infile.parent / f"{prefix}{key}_{name}.tsv"
+        base_dir = outdir if outdir is not None else infile.parent
+        outfile = base_dir / f"{prefix}{key}_{name}.tsv"
         logger.info(f"Writing {outfile}")
         val.to_csv(outfile, sep="\t", index=False)
+
+
+@main.command(name="compare-protein")
+@click.option("--site-gct", type=click.Path(exists=True, dir_okay=False), required=True, help="Site-level GCT file")
+@click.option("--protein-gct", type=click.Path(exists=True, dir_okay=False), required=True, help="Protein/Gene-level GCT file")
+@click.option("-j", "--join-on", type=str, default="auto", show_default=True, help="Join key or 'auto' to select best match (e.g., symbol, ENSG, geneid)")
+@click.option("-o", "--output-dir", type=click.Path(exists=False, file_okay=False, dir_okay=True), default=None, show_default=True)
+@click.option("--agg", type=click.Choice(["mean", "median", "sum"]), default="mean", show_default=True, help="Aggregation across multiple protein rows per join key")
+@click.option("--metric", type=click.Choice(["ratio", "log2ratio"]), default="log2ratio", show_default=True, help="Which matrix to emit as GCT/Excel when writing files")
+@click.option("--write-gct/--no-write-gct", "write_gct_flag", is_flag=True, default=True, show_default=True, help="Write output matrix to GCT as well as TSV")
+@click.option("--write-excel/--no-write-excel", "write_excel_flag", is_flag=True, default=False, show_default=True, help="Write output matrix to Excel with row metadata")
+@click.option("--drop-unmatched/--keep-unmatched", is_flag=True, default=False, show_default=True, help="Drop unmatched site rows from outputs")
+@click.option("--eps", type=float, default=1e-6, show_default=True, help="Small constant to avoid division by zero")
+@click.option("--gene", "genes", multiple=True, help="Gene/geneID identifiers to plot heatmaps for")
+@click.option("--genes-file", type=click.Path(exists=True, dir_okay=False), help="File containing gene IDs (one per line) to plot")
+@click.option("--gene-col", type=str, default=None, help="Explicit rdesc column to match genes (case-insensitive)")
+@click.option("--gene-debug/--no-gene-debug", is_flag=True, default=False, show_default=True, help="Print per-gene match diagnostics")
+@click.option("--force/--no-force", is_flag=True, default=False, show_default=True, help="Overwrite existing outputs (both data and plots)")
+@click.option("--force-plots/--no-force-plots", "force_plots", is_flag=True, default=False, show_default=True, help="Overwrite existing plot PDFs")
+@click.option("--force-data/--no-force-data", "force_data", is_flag=True, default=False, show_default=True, help="Overwrite existing data files (TSVs, GCT/Excel)")
+@click.option("--zscore/--no-zscore", is_flag=True, default=True, show_default=True, help="Also render row-wise z-scored heatmaps")
+@click.option("--discover-genes/--no-discover-genes", is_flag=True, default=False, show_default=True, help="Discover gene names from existing subfolders under outdir/genes")
+@click.option("--latex/--no-latex", is_flag=True, default=False, show_default=True, help="Attempt to write a PDF summary if LaTeX is available")
+def compare_protein(site_gct, protein_gct, join_on, output_dir, agg, metric, write_gct_flag, write_excel_flag: bool, drop_unmatched, eps, genes, genes_file, gene_col, gene_debug, force, force_plots, force_data, zscore, discover_genes, latex):
+    """
+    Compare site-level intensities to protein/gene-level abundances by computing per-sample ratios and log2 ratios.
+    """
+    site_gct = pathlib.Path(site_gct).absolute()
+    protein_gct = pathlib.Path(protein_gct).absolute()
+    outdir = pathlib.Path(output_dir or site_gct.parent).absolute()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    gene_list = [g for g in genes if g]
+    if genes_file:
+        with open(genes_file, "r", encoding="utf-8") as handle:
+            extra_genes = [line.strip() for line in handle if line.strip()]
+        gene_list.extend(extra_genes)
+    if gene_list:
+        gene_list = list(dict.fromkeys(gene_list))
+    elif discover_genes:
+        # Discover gene names from outdir/genes/* subdirectories
+        genes_dir = outdir / "genes"
+        if genes_dir.exists() and genes_dir.is_dir():
+            subdirs = [p.name for p in genes_dir.iterdir() if p.is_dir() and not p.name.startswith(".")]
+            if subdirs:
+                gene_list = sorted(subdirs)
+
+    # Resolve force behavior
+    eff_force_plots = bool(force or force_plots)
+    eff_force_data = bool(force or force_data)
+
+    emat_s, cdesc_s, rdesc_s = read_gct(str(site_gct))
+    emat_p, cdesc_p, rdesc_p = read_gct(str(protein_gct))
+
+    try:
+        ratio_df, log2ratio_df, rdesc_out, samples, site_join_key, prot_join_key, matched_rows, total_rows = compute_site_vs_protein(
+            emat_s, rdesc_s, emat_p, rdesc_p, join_on=join_on, agg=agg, eps=eps, drop_unmatched=drop_unmatched
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    # Write TSVs
+    base = outdir / f"site_vs_protein_{len(ratio_df)}x{len(samples)}"
+    ratio_tsv = str(base) + "_ratio.tsv"
+    log2ratio_tsv = str(base) + "_log2ratio.tsv"
+    ratio_out = rdesc_out.join(ratio_df)
+    log2ratio_out = rdesc_out.join(log2ratio_df)
+    if not Path(ratio_tsv).exists() or eff_force_data:
+        ratio_out.to_csv(ratio_tsv, sep="\t", index=True, header=True)
+    else:
+        click.echo(f"Exists, skipping: {ratio_tsv}")
+    if not Path(log2ratio_tsv).exists() or eff_force_data:
+        log2ratio_out.to_csv(log2ratio_tsv, sep="\t", index=True, header=True)
+    else:
+        click.echo(f"Exists, skipping: {log2ratio_tsv}")
+
+    # Text summary
+    def _median_ignore_na(a):
+        try:
+            return float(np.nanmedian(a))
+        except Exception:
+            return float("nan")
+
+    medians = {s: _median_ignore_na(ratio_df[s].to_numpy()) for s in samples}
+    summary_lines = [
+        "SITE vs PROTEIN COMPARISON",
+        f"site GCT: {site_gct}",
+        f"protein GCT: {protein_gct}",
+        f"join_on: site='{site_join_key}', protein='{prot_join_key}'; agg: {agg}; eps: {eps}",
+        f"samples (intersection): {len(samples)}",
+        f"matched site rows: {matched_rows}/{total_rows}",
+        "",
+        "median(site/protein) by sample:",
+    ]
+    for s in samples:
+        summary_lines.append(f"  - {s}: {medians[s]}")
+    summary_text = "\n".join(summary_lines)
+    summary_path = outdir / "compare_protein_summary.txt"
+    if not summary_path.exists() or eff_force_data:
+        summary_path.write_text(summary_text)
+    else:
+        click.echo(f"Exists, skipping: {summary_path}")
+
+    click.echo(f"Wrote: {ratio_tsv}")
+    click.echo(f"Wrote: {log2ratio_tsv}")
+    click.echo(f"Wrote summary: {summary_path}")
+
+    if latex:
+        pdf_path = maybe_compile_latex(summary_text, str(outdir), basename="compare_protein_summary", title="site-annot site vs protein")
+        if pdf_path:
+            click.echo(f"Wrote PDF: {pdf_path}")
+        else:
+            click.echo("LaTeX engine not available or failed; skipped PDF.")
+
+    # Optional GCT/Excel outputs of the chosen metric
+    if write_gct_flag or write_excel_flag:
+        emat_out = ratio_df if metric == "ratio" else log2ratio_df
+        # Ensure sample metadata aligns
+        cdesc_out = cdesc_s.loc[samples]
+        gct_base = outdir / f"site_vs_protein_{metric}"
+        rows, cols = emat_out.shape
+        if write_gct_flag:
+            gct_out = Path(f"{gct_base}_{rows}x{cols}.gct")
+            if not gct_out.exists() or eff_force_data:
+                write_gct_file(emat_out, cdesc=cdesc_out, rdesc=rdesc_out, filename=str(gct_base))
+            else:
+                click.echo(f"Exists, skipping: {gct_out}")
+        if write_excel_flag:
+            xlsx_out = Path(f"{gct_base}_{rows}x{cols}.xlsx")
+            if not xlsx_out.exists() or eff_force_data:
+                combined = rdesc_out.join(emat_out)
+                write_excel_file(combined, filename=str(gct_base), shape=emat_out.shape, column_metadata=cdesc_out)
+            else:
+                click.echo(f"Exists, skipping: {xlsx_out}")
+
+    if gene_list:
+        emat_for_plot = ratio_df if metric == "ratio" else log2ratio_df
+        try:
+            generated, missing, dbg = generate_gene_heatmaps(
+                emat_for_plot,
+                rdesc_s,
+                samples,
+                outdir,
+                gene_list,
+                metric,
+                force_data=eff_force_data,
+                force_plots=eff_force_plots,
+                gene_col=gene_col,
+                debug=gene_debug,
+                generate_zscore=zscore,
+            )
+            click.echo(f"Generated heatmaps for {generated}/{len(gene_list)} genes.")
+            if missing:
+                click.echo("Missing genes: " + ", ".join(missing))
+            if gene_debug and dbg:
+                for line in dbg:
+                    click.echo(line)
+        except FileNotFoundError as exc:
+            click.echo(f"Skipping gene heatmaps: {exc}")
+        except subprocess.CalledProcessError as exc:
+            click.echo(f"Gene heatmap generation failed: {exc}")
+
+
+@main.command(name="limma-report")
+@click.option("--limma-tsv", type=click.Path(exists=True, dir_okay=False), multiple=True, required=True, help="Limma toptable TSV(s) with columns like id, logFC, adj.P.Val, P.Value [and optional symbol, contrast]")
+@click.option("-n", "--top-n", type=int, default=25, show_default=True)
+@click.option("-o", "--output-dir", type=click.Path(exists=False, file_okay=False, dir_okay=True), default=None, show_default=True)
+@click.option("--latex/--no-latex", is_flag=True, default=True, show_default=True)
+@click.option("--ollama/--no-ollama", is_flag=True, default=False, show_default=True)
+@click.option("--ollama-model", type=str, default="llama3.2:3b", show_default=True)
+def limma_report(limma_tsv, top_n, output_dir, latex, ollama, ollama_model):
+    """Render a small LaTeX/PDF report of top limma hits and optionally ask a local LLM (Ollama) to summarize."""
+    outdir = pathlib.Path(output_dir or pathlib.Path(limma_tsv[0]).parent).absolute()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Collect sections
+    import pandas as pd
+    sections = []
+    text_summary_lines = []
+    for tsv in limma_tsv:
+        df = pd.read_csv(tsv, sep="\t")
+        label = pathlib.Path(tsv).stem
+        if "contrast" in df.columns and df["contrast"].nunique() > 1:
+            for cname, sub in df.groupby("contrast"):
+                sub2 = sub.sort_values(["adj.P.Val", "P.Value"], ascending=[True, True]).head(top_n)
+                headers = [h for h in ["id", "symbol", "logFC", "adj.P.Val", "P.Value"] if h in sub2.columns]
+                rows = [[str(x) for x in row] for row in sub2[headers].itertuples(index=False, name=None)]
+                sections.append({"title": f"{label} ({cname})", "headers": headers, "rows": rows})
+                text_summary_lines.append(f"{label} ({cname}) top {len(rows)} hits: best adj.P.Val = {sub2['adj.P.Val'].min()}")
+        else:
+            df2 = df.sort_values(["adj.P.Val", "P.Value"], ascending=[True, True]).head(top_n)
+            headers = [h for h in ["id", "symbol", "logFC", "adj.P.Val", "P.Value"] if h in df2.columns]
+            rows = [[str(x) for x in row] for row in df2[headers].itertuples(index=False, name=None)]
+            sections.append({"title": label, "headers": headers, "rows": rows})
+            text_summary_lines.append(f"{label} top {len(rows)} hits: best adj.P.Val = {df2['adj.P.Val'].min() if 'adj.P.Val' in df2 else 'NA'}")
+
+    # Save text summary
+    summary_text = "\n".join(text_summary_lines)
+    (outdir / "limma_summary.txt").write_text(summary_text)
+
+    # Optional LaTeX PDF via Jinja2
+    if latex:
+        context = {"title": "LIMMA Top Hits", "sections": sections, "columns_spec": "l" + "c" * (len(sections[0]['headers']) - 1) if sections and sections[0]['headers'] else "lc"}
+        pdf_path = compile_latex_from_template(context, str(outdir), basename="limma_top_hits")
+        if pdf_path:
+            click.echo(f"Wrote PDF: {pdf_path}")
+        else:
+            click.echo("LaTeX engine not available or Jinja2 missing; skipped PDF.")
+
+    # Optional Ollama summary
+    if ollama:
+        ollama_out = maybe_ollama_summarize(summary_text, str(outdir), basename="limma_ollama", model=ollama_model)
+        if ollama_out:
+            click.echo(f"Wrote Ollama summary: {ollama_out}")
+        else:
+            click.echo("Ollama not available or failed; skipped model summary.")
+
+
+@main.command(name="cache", help="Inspect and manage the local UniProt mapping cache")
+@click.argument("action", type=click.Choice(["ls", "rm", "clear", "import"]))
+@click.argument("keys", nargs=-1)
+@click.option("--limit", type=int, default=20, show_default=True, help="Maximum keys to display (for ls)")
+@click.option("--filter", "filter_pat", type=str, default=None, help="Substring to filter keys (for ls)")
+@click.option("--yes", is_flag=True, help="Confirm deletion for clear")
+@click.option("--file", "import_file", type=click.Path(exists=True, dir_okay=False), help="TSV file with two columns: query and uniprot.Swiss-Prot (for import)")
+def cache_cmd(action, keys, limit, filter_pat, yes, import_file):
+    if action == "ls":
+        with mapper.get_db() as db:
+            total = len(db)
+            shown = 0
+            click.echo(f"Cache file: {mapper.sqlitedict_filename}")
+            click.echo(f"Total keys: {total}")
+            for k in db.keys():
+                ks = str(k)
+                if filter_pat and filter_pat not in ks:
+                    continue
+                click.echo(ks)
+                shown += 1
+                if shown >= limit:
+                    break
+            if shown == 0:
+                click.echo("No keys match filter" if filter_pat else "Cache is empty or unreadable")
+        return
+
+    if action == "rm":
+        if not keys:
+            raise click.UsageError("Provide at least one ENSP key to remove")
+        removed = 0
+        with mapper.get_db() as db:
+            for key in keys:
+                if key in db:
+                    del db[key]
+                    removed += 1
+            db.commit()
+        click.echo(f"Removed {removed} keys from cache")
+        return
+
+    if action == "clear":
+        path = mapper.sqlitedict_filename
+        if not yes:
+            click.echo(f"This will delete {path}. Re-run with --yes to confirm.")
+            return
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                click.echo(f"Deleted {path}")
+            else:
+                click.echo(f"Cache file does not exist: {path}")
+        except Exception as exc:
+            click.echo(f"Failed to delete {path}: {exc}")
+        return
+
+    if action == "import":
+        if not import_file:
+            raise click.UsageError("Provide --file path to TSV with columns: query, uniprot.Swiss-Prot")
+        import pandas as pd
+        df = pd.read_csv(import_file, sep="\t")
+        required = {"query", "uniprot.Swiss-Prot"}
+        if not required.issubset(df.columns):
+            raise click.UsageError(f"Missing required columns: {required - set(df.columns)}")
+        rows = [
+            {"query": str(row["query"]), "uniprot": {"Swiss-Prot": str(row["uniprot.Swiss-Prot"])}}
+            for _, row in df.iterrows()
+        ]
+        with mapper.get_db() as db:
+            mapper.update_db(db, rows)
+        click.echo(f"Imported {len(rows)} rows into cache")

@@ -3,7 +3,7 @@ import re
 import pandas as pd
 from collections import defaultdict
 
-from .constants import VALID_MODI_COLS, MODI_ABBREVS, get_all_columns
+from .constants import VALID_MODI_COLS, MODI_ABBREVS, get_all_columns, allowed_residues_for_col
 from . import log
 
 pd.options.display.max_columns = 99
@@ -542,6 +542,13 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
         if res_df is None:
             continue
 
+        allowed = allowed_residues_for_col(col)
+        if allowed is not None and not res_df.empty and "AA" in res_df.columns:
+            res_df = res_df[res_df["AA"].isin(allowed)]
+            if res_df.empty:
+                # No valid residues for this modification in this protein/peptide set
+                continue
+
         df_positions = enhance_dataframe(res_df, df, seqinfo)
         if df_positions is None or len(df_positions) == 0: # can happen different protein isoforms or there's no modification of that type
             continue
@@ -556,6 +563,20 @@ def main(df: pd.DataFrame, seqinfo: dict, isobaric=True) -> dict:
             df_positions = quant_isobaric_site(df_positions)
 
         df_positions_filtered = process_probability_and_filter(df_positions, col)
+        # Enforce residue validity again after merges/filters
+        allowed = allowed_residues_for_col(col)
+        if (
+            allowed is not None
+            and isinstance(df_positions_filtered, pd.DataFrame)
+            and not df_positions_filtered.empty
+            and "AA" in df_positions_filtered.columns
+        ):
+            before = len(df_positions_filtered)
+            df_positions_filtered = df_positions_filtered[df_positions_filtered["AA"].isin(allowed)]
+            dropped = before - len(df_positions_filtered)
+            if dropped > 0:
+                logger.warning("Dropped %d rows with invalid residues for %s", dropped, col)
+
         df_positions_filtered = reorder_nice(df_positions_filtered)
         # if df_positions_filtered.empty:
             # import ipdb; ipdb.set_trace()

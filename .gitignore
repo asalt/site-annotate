@@ -1,6 +1,7 @@
 # additional 
 data/*
 data/phosphositeplus/*
+external/*
 
 # R cache artifacts
 R/cache.sqlite

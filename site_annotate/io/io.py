@@ -746,6 +746,87 @@ def write_gct(emat, cdesc, rdesc=None, filename="siteinfo_combined"):
             f.write(row_str + "\n")
 
 
+def read_gct(filepath: str):
+    """
+    Read a GCT v1.3 file written by write_gct and return (emat, cdesc, rdesc).
+
+    Returns
+    - emat: DataFrame indexed by row id with sample columns
+    - cdesc: DataFrame indexed by sample with column metadata columns
+    - rdesc: DataFrame indexed by row id with row metadata columns
+    """
+    import math
+
+    with open(filepath, "r") as f:
+        header1 = f.readline().strip()
+        if not header1.startswith("#1.3"):
+            raise ValueError("Unsupported GCT version; expected #1.3")
+
+        dims = f.readline().strip().split("\t")
+        if len(dims) < 4:
+            raise ValueError("Malformed GCT header dimensions line")
+        n_rows, n_cols, n_rdesc, n_cdesc = map(int, dims[:4])
+
+        col_header = f.readline().rstrip("\n").split("\t")
+        if len(col_header) < (1 + n_rdesc + n_cols):
+            raise ValueError("Malformed GCT column header")
+
+        id_col = col_header[0]
+        rdesc_cols = col_header[1 : 1 + n_rdesc]
+        sample_cols = col_header[1 + n_rdesc : 1 + n_rdesc + n_cols]
+
+        # Read cdesc rows
+        cdesc_rows = []
+        for _ in range(n_cdesc):
+            line = f.readline()
+            if not line:
+                raise ValueError("Unexpected EOF while reading cdesc")
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < (1 + n_rdesc + n_cols):
+                raise ValueError("Malformed cdesc row")
+            desc_name = parts[0]
+            values = parts[1 + n_rdesc : 1 + n_rdesc + n_cols]
+            cdesc_rows.append((desc_name, values))
+
+        if cdesc_rows:
+            # Build DataFrame with index=sample, columns=cdesc fields
+            cdesc_dict = {name: values for name, values in cdesc_rows}
+            cdesc = pd.DataFrame(cdesc_dict, index=sample_cols)
+        else:
+            cdesc = pd.DataFrame(index=sample_cols)
+
+        # Read expression + rdesc rows
+        ids, rdesc_data, emat_data = [], [], []
+        for _ in range(n_rows):
+            line = f.readline()
+            if not line:
+                raise ValueError("Unexpected EOF while reading data rows")
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < (1 + n_rdesc + n_cols):
+                raise ValueError("Malformed data row")
+            rid = parts[0]
+            ids.append(rid)
+            rdesc_vals = parts[1 : 1 + n_rdesc]
+            rdesc_data.append(rdesc_vals)
+            expr_vals = parts[1 + n_rdesc : 1 + n_rdesc + n_cols]
+            # coerce to float when possible
+            def _to_num(x):
+                try:
+                    v = float(x)
+                    if math.isfinite(v):
+                        return v
+                except Exception:
+                    pass
+                return pd.NA
+
+            emat_data.append([_to_num(x) for x in expr_vals])
+
+        emat = pd.DataFrame(emat_data, index=ids, columns=sample_cols)
+        rdesc = pd.DataFrame(rdesc_data, index=ids, columns=rdesc_cols if rdesc_cols else [])
+
+    return emat, cdesc, rdesc
+
+
 def write_excel(
     df: pd.DataFrame,
     filename="siteinfo_combined",
@@ -849,7 +930,11 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     fasta_keys = [str(k) for k in fasta_data.keys()]
     fasta_df = pd.DataFrame({"protein": fasta_keys})
     fasta_df = mapper.extract_keyvals_pipedsep(fasta_df)
-    fasta_df = mapper.add_uniprot(fasta_df)
+    # import ipdb; ipdb.set_trace()
+    if "ENSP" in fasta_df:
+        fasta_df = mapper.add_uniprot(fasta_df, keycol="ENSP")
+    else:
+        fasta_df = mapper.add_uniprot(fasta_df, keycol="protein")
 
     fasta_token_index = mapper.build_fasta_token_index(fasta_df)
     fasta_uniprot_index = mapper.build_fasta_uniprot_index(fasta_df)
@@ -919,12 +1004,25 @@ def load_and_validate_files(psm_path, fasta_path, uniprot_check):
     lookup_cols = [col for col in ("ENSP", "ENST", "ENSG", "geneid", "symbol", "uniprot_id") if col in fasta_df.columns]
     if lookup_cols:
         lookup = fasta_df.set_index("protein")
+        pre_fastafill = df["uniprot_id"].notna().sum() if "uniprot_id" in df.columns else 0
         for col in lookup_cols:
             if col not in df.columns:
                 df[col] = pd.NA
             else:
                 df[col] = df[col].replace("", pd.NA)
             df[col] = df[col].fillna(df["protein"].map(lookup[col]))
+        post_fastafill = df["uniprot_id"].notna().sum() if "uniprot_id" in df.columns else 0
+        delta = post_fastafill - pre_fastafill
+        if delta > 0:
+            logger.info("UniProt IDs: %d filled from FASTA annotations", delta)
+        # Sanity check: drop header-like or invalid UniProt IDs
+        if "uniprot_id" in df.columns:
+            from .. import mapper as _mapper
+            invalid = df["uniprot_id"].notna() & ~df["uniprot_id"].apply(_mapper._is_valid_uniprot_id)
+            if invalid.any():
+                nbad = int(invalid.sum())
+                logger.warning("Discarding %d invalid UniProt accessions from FASTA fill", nbad)
+                df.loc[invalid, "uniprot_id"] = pd.NA
 
     if fa_psp_ref:
         logger.info("FASTA data loaded successfully.")

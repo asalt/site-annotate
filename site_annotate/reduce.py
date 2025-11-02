@@ -11,7 +11,7 @@ import numpy as np
 from tqdm import tqdm
 
 
-from .constants import VALID_MODI_COLS
+from .constants import VALID_MODI_COLS, allowed_residues_for_col
 from . import log
 
 logger = log.get_logger(__file__)
@@ -366,6 +366,7 @@ def _reduce_sites(df):
         "geneid",
         "taxon",
         "symbol",
+        "uniprot_id",
         "protein_start",
         "protein_end",
         "protein_start_psp",
@@ -379,7 +380,8 @@ def _reduce_sites(df):
         "AA",
         # "ENSP", # already added
     ]
-    addl_cols = [x for x in addl_cls if x in df.columns]
+    # Avoid duplicates: don't re-include any groupby columns
+    addl_cols = [x for x in addl_cls if x in df.columns and x not in groupby_cols]
 
     _meta = df.drop_duplicates(subset=groupby_cols)[groupby_cols + addl_cols]
 
@@ -394,6 +396,13 @@ def reduce_sites(data: dict, n_workers=None, **kwargs):
     newdata = dict()
     for key, df in tqdm(data.items()):
         logger.info(f"Reducing {key}")
+        allowed = allowed_residues_for_col(key)
+        if allowed is not None and "AA" in df.columns:
+            before = len(df)
+            df = df[df["AA"].isin(allowed)]
+            dropped = before - len(df)
+            if dropped > 0:
+                logger.warning(f"Dropped {dropped} rows with invalid residues for {key}")
         newdata[key] = _reduce_sites(df)
 
     return newdata

@@ -388,6 +388,7 @@ def reorder_nice(df):
         "spectralsim",
         "rtscore",
         "expectation",
+        "expect",
         "hyperscore",
         "nextscore",
         "peptideprophet_probability",

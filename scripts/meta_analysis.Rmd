@@ -29,12 +29,20 @@ suppressPackageStartupMessages(library(here))
 src_dir <- file.path(here("R"))
 io_tools <- new.env()
 source(file.path(src_dir, "./io.R"), local = io_tools)
+
+
+myreactable <- function(x, ...) reactable(x, defaultPageSize = 4, searchable = T, compact = T, ...)
 ```
 
 
 # load
+here we load
+here is more text
+another
 
-```{r, label='get params'}
+## parameters 
+note
+```{r, label='get params', class.source = 'fold-show'}
 (data_dir <- params$data_dir)
 (metadata <- params$metadata)
 
@@ -52,8 +60,9 @@ print(data_dir)
 ```
 
 
+## tables 
 
-```{r, label='get tables'}
+```{r, label='get tables', class.source = 'fold-show'}
 
 (files <- fs::dir_ls(data_dir , regexp = ".*_reduced.tsv$", fail = F, recurse = T))
 
@@ -61,7 +70,6 @@ if (length(files) == 0) {
   cat("no files found")
   knitr::knit_exit()
 }
-
 
 my_set_names <- io_tools$set_name
 
@@ -77,6 +85,8 @@ names(file_path_names) <- names(datas)
 
 
 ```
+
+## metadata
 
 ```{r, label='get meta params'}
 meta_df <- read_tsv(metadata, show_col_types = F)
@@ -119,6 +129,7 @@ meta_df %>% myreactable()
 
 
 ```{r}
+cat("normalizing...")
 
 datas_long <- datas %>% purrr::map(~{
   df <- .x
@@ -148,6 +159,8 @@ datas_long %<>% purrr::imap(~{
 
 ```
 
+## view data
+
 ```{r, fig.width=9}
 
 datas_long[[1]] %>% 
@@ -157,8 +170,6 @@ datas_long[[1]] %>%
   theme(axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
 
 ```
-
-
 
 
 

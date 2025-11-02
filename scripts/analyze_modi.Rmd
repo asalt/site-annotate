@@ -49,6 +49,7 @@ source(file.path(here("R", "lazyloader.R")))
 io_tools <- get_tool_env("io")
 heatmap_tools <- get_tool_env("heatmap")
 util_tools <- get_tool_env("utils")
+limma_tools <- get_tool_env("limma")
 
 OUTDIR <- params$output_dir %||% params$data_dir %||% "."
 config_file <- params$config %||% file.path(here(), "config", "base.toml")
@@ -102,7 +103,7 @@ gct@cdesc %>% myreactable
 
 ## heatmap
 
-```{r, label='draw-heatmap'}
+```{r, label='draw-heatmap', include = F}
 .tokeep <- gct %>%
   melt_gct() %>%
   distinct(fifteenmer, .keep_all = T) %>%
@@ -111,19 +112,28 @@ subgct <- gct %>% subset_gct(rid = .tokeep) # this is important to reduce redund
 gct_z <- util_tools$scale_gct(subgct, group_by = params$zscore_by)
 
 
-cut_by <- c(NULL)
-if (!is.null(config$heatmap$cut_by)){
-    cut_by <- config$heatmap$cut_by
-}
-print(paste0('cut by is: ', cut_by))
 
-cut_by %>% purrr::map(~{
+
+param_grid <- expand.grid(
+  cut_by = config$heatmap$cut_by %||% NULL,
+  cluster_rows = config$heatmap$cluster_rows %||% TRUE,
+  cluster_columns = config$heatmap$cluster_columns %||% FALSE,
+  # top_n = config$heatmap$selection$top_n %||% c(20, 40, 60)
+  # file_data = file_data
+  )
+
+param_grid %>% purrr::map(~{
+    cut_by_val <- ..1
+    cluster_rows_val <- ..2
+    cluster_columns_val <- ..3
+    # top_n_val <- ..4
     .cut_by  <- .x
+    # print(paste0('cut by is: ', cut_by))
     print(cut_by)
     .outf <- file.path(OUTDIR,
-            paste0(OUTNAME, "_heatmap_all_", 
+            paste0(OUTNAME, "_heatmap_all_",
             "cut_",
-            .cut_by,
+            cut_by_val,
             nrow(gct_z@mat),
             "x",
             ncol(gct_z@mat),
@@ -142,7 +152,6 @@ cut_by %>% purrr::map(~{
             column_title = make.names(basename(params$gct) %>% gsub("_n\\d+x\\d+\\.gct", "", .)),
             meta_to_include = config$heatmap$legend_include %||% NULL,
             meta_to_exclude = config$heatmap$legend_exclude %||% NULL,
-
     )
     ht <- ht_draw_func() # sets some things at "draw"time
     # ComplexHeatmap::draw(ht)
@@ -150,6 +159,70 @@ cut_by %>% purrr::map(~{
     return(ht)
 })
 ```
+
+
+
+
+
+# limma
+```{r, label='limma-setup', cache=F}
+library(limma)
+if (config$limma$do){
+
+  topTables <- limma_tools$run_limma(gct, config)
+
+}
+
+ # ( contrasts <- limma::makeContrasts(contrast_strings, levels = mod) )
+```
+
+
+
+
+```{r, label='topTables'}
+
+toptables2 <- toptables %>% purrr::map(~ {
+  assertthat::are_equal(nrow(.x), nrow(dataw))
+  bind_cols(
+    dataw %>% select(-meta$name),
+    .x
+  ) %>% arrange(P.Value) %>%
+    left_join(data %>% select(
+      acc_id,
+      lt_lit,
+      ms_lit,
+      fifteenmer,
+      sitename,
+      uniprot_id,
+      ENSP,
+      site_id
+    ) %>%
+    distinct()
+  )
+
+})
+
+
+toptables2 %>% purrr::iwalk(~ {
+  .outdir <- file.path(OUTDIR, "results", "modi")
+  if (!fs::dir_exists(.outdir)) fs::dir_create(.outdir)
+  .outf <- .y %>% str_replace(" - ", "_minus_")
+  .fulloutf <- file.path(.outdir, paste0(make.names(.outf), ".tsv"))
+
+  if (fs::file_exists(.fulloutf) && config$advanced$replace == FALSE) {
+    cat(paste0("Skipping ", .fulloutf, " because it exists and replace is FALSE\n"))
+    return()
+  }
+  cat(paste0("Writing ", .fulloutf,'\n'))
+  .x %>% write_tsv(.fulloutf)
+
+})
+```
+
+
+
+
+
 
 ```{r, label = 'end'}
 if (SAVE_ENVIRON) save.image(file.path(OUTDIR$data_dir, 'merge_modis.RData'))

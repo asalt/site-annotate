@@ -112,6 +112,30 @@ def get_all_columns(iterable):
     return matches
 
 
+# Allowed residues by modification column prefix
+ALLOWED_AA_PREFIX = {
+    "sty": set("STY"),
+    "k": set("K"),
+    "m": set("M"),
+    "kr": set("KR"),
+}
+
+
+def allowed_residues_for_col(col: str) -> set | None:
+    """Return allowed amino-acid letters for a given modification column.
+
+    Falls back to K for known GG/ubiquitin remnants (114.0429) regardless of prefix.
+    Returns None if no restriction should be applied.
+    """
+    if not isinstance(col, str):
+        return None
+    # Ubiquitin GG remnant on Lys
+    if col.endswith("_114_0429"):
+        return set("K")
+    prefix = col.split("_", 1)[0]
+    return ALLOWED_AA_PREFIX.get(prefix)
+
+
 def get_all_possible_id_cols():
 
     return [
