@@ -223,6 +223,15 @@ TODO: describe normalization options
   - Generates 4 clustering variants per gene (rcT/F_ccT/F) and, by default, also row-wise z-scored versions (suffix `_z`).
   - Control with `--zscore/--no-zscore`. Discover existing genes from output folders with `--discover-genes`.
 
+QC outputs
+- Violin distributions per sample: `qc/violin_distributions.pdf`.
+- Non-zero counts per sample: `qc/nonzero_counts.pdf`.
+- Site composition by residue (S/T/Y):
+  - Total counts: `qc/sty_counts_total.pdf`.
+  - Per-sample stacked S/T/Y: `qc/sty_counts_by_sample_STY.pdf`.
+  - Tyrosine-only per-sample: `qc/sty_counts_by_sample_Y.pdf` (own scale so Y is visible).
+  - Ordering respects `[params.extra].sample_order` if provided; otherwise it attempts an intelligent ordering from names.
+
 
 # Developer notes
 
