@@ -594,74 +594,7 @@ select_top_n <- function(data,
 
 
 
-filter_nonzeros <- function(gct,
-                            min_non_zeros = 1,
-                            nonzero_subgroup = NULL) {
-  #------------------------------------------------
-  # 1) Melt the GCT into long / tidy form
-  #------------------------------------------------
-  melted_df <- gct %>%
-    melt_gct()
-
-  #------------------------------------------------
-  # 2) Validate subgroup if provided
-  #------------------------------------------------
-  if (!is.null(nonzero_subgroup)) {
-    if (!nonzero_subgroup %in% colnames(melted_df)) {
-      stop(
-        sprintf(
-          "Column '%s' specified in 'nonzero_subgroup' does not exist in the melted GCT data.",
-          nonzero_subgroup
-        )
-      )
-    }
-  }
-
-  #------------------------------------------------
-  # 3) Figure out how we’ll group the data
-  #------------------------------------------------
-  # Always group by 'id.x'; optionally group by the subgroup
-  cutoff <- min_non_zeros * length(gct@cdesc$id)
-  cutoff <- data.frame(id.y = gct@cdesc$id, cutoff = cutoff)
-
-  if (!is.null(nonzero_subgroup)){
-    cutoff <-  gct@cdesc %>%   group_by(.data[[nonzero_subgroup]]) %>%  summarize(cutoff = n())
-  #cutoff <- gct@cdesc %>%
-  # group_by(across(all_of(group_vars[group_vars != "id.x"]))) %>%
-  #summarize(cutoff = n() * min_non_zeros, .groups="drop")k
-  }
-
-  group_vars <- "id.x"
-  if (!is.null(nonzero_subgroup)) {
-    group_vars <- c(group_vars, nonzero_subgroup)
-  }
-
-  #------------------------------------------------
-  # 4) Count non-NA and non-zero values within each group
-  #------------------------------------------------
-
-  count_df <- melted_df %>%
-    filter(!is.na(value), value != 0) %>%
-    group_by(across(all_of(group_vars))) %>%
-    summarise(n_nonzeros = n(), .groups = "drop") %>%
-    left_join(cutoff, by=group_vars)#"id.y")
-
-  #------------------------------------------------
-  # 5) Keep only those groups that meet the min_non_zeros cutoff
-  #------------------------------------------------
-  valid_groups <- count_df %>%
-    mutate(cutoff=cutoff) %>%
-    filter(n_nonzeros >= cutoff) %>%
-    # keep only the grouping columns, so we can join back
-    select(all_of(group_vars)) %>%
-    distinct()
-  to_keep <- unique(valid_groups$id.x)
-  browser()
-
-  new_gct <- gct %>% subset_gct(rid = to_keep)
-
-  return(new_gct)
-}
+## removed older experimental version of filter_nonzeros (duplicated and contained browser())
 
 
 
@@ -692,15 +625,31 @@ filter_nonzeros <- function(gct,
   #------------------------------------------------
   # 3) Compute cutoff table
   #------------------------------------------------
+  # Interpret min_non_zeros: if <=1 treat as fraction; if >1 treat as absolute count
+  is_fraction <- is.numeric(min_non_zeros) && is.finite(min_non_zeros) && (min_non_zeros <= 1)
+  if (is_fraction && (min_non_zeros < 0)) {
+    stop("min_non_zeros fraction must be between 0 and 1")
+  }
   if (is.null(nonzero_subgroup)) {
     # Global cutoff across all samples
-    cutoff_df <- data.frame(cutoff = min_non_zeros * nrow(gct@cdesc))
+    if (is_fraction) {
+      cutoff_abs <- ceiling(min_non_zeros * nrow(gct@cdesc))
+    } else {
+      cutoff_abs <- as.integer(min_non_zeros)
+    }
+    cutoff_df <- data.frame(cutoff = cutoff_abs)
     group_vars <- c("id.x")
   } else {
     # Per-subgroup cutoff
-    cutoff_df <- gct@cdesc %>%
-      group_by(.data[[nonzero_subgroup]]) %>%
-      summarize(cutoff = n() * min_non_zeros, .groups = "drop")
+    if (is_fraction) {
+      cutoff_df <- gct@cdesc %>%
+        group_by(.data[[nonzero_subgroup]]) %>%
+        summarize(cutoff = ceiling(n() * min_non_zeros), .groups = "drop")
+    } else {
+      cutoff_df <- gct@cdesc %>%
+        group_by(.data[[nonzero_subgroup]]) %>%
+        summarize(cutoff = as.integer(min_non_zeros), .groups = "drop")
+    }
     group_vars <- c("id.x", nonzero_subgroup)
   }
 
@@ -708,16 +657,23 @@ filter_nonzeros <- function(gct,
   # 4) Count non-zero, non-NA values per feature (and subgroup if provided)
   #------------------------------------------------
   count_df <- melted_df %>%
-    filter(!is.na(value), value != 0) %>%
-    left_join(gct@cdesc %>% select(id.y = id, !!nonzero_subgroup), by = "id.y") %>%
-    group_by(across(all_of(group_vars))) %>%
-    summarize(n_nonzeros = n(), .groups = "drop")
+    filter(!is.na(value), value != 0)
+  if (!is.null(nonzero_subgroup)) {
+    count_df <- count_df %>%
+      left_join(gct@cdesc %>% select(id.y = id, !!sym(nonzero_subgroup)), by = "id.y") %>%
+      group_by(across(all_of(group_vars))) %>%
+      summarize(n_nonzeros = n(), .groups = "drop")
+  } else {
+    count_df <- count_df %>%
+      group_by(across(all_of(group_vars))) %>%
+      summarize(n_nonzeros = n(), .groups = "drop")
+  }
 
   #------------------------------------------------
   # 5) Join with cutoff and keep valid rows
   #------------------------------------------------
   if (is.null(nonzero_subgroup)) {
-    count_df$cutoff <- min_non_zeros
+    count_df$cutoff <- cutoff_df$cutoff[1]
   } else {
     count_df <- left_join(count_df, cutoff_df, by = nonzero_subgroup)
   }

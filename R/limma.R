@@ -113,15 +113,33 @@ run_limma <- function(gct, config, do_impute = TRUE) {
     contrast_combinations <- combn(group_levels, 2, simplify = FALSE)
 
     # Create contrasts for each combination
+    # Heuristic ordering: put the longer label first (falls back to alphabetical)
     contrast_strings <- lapply(contrast_combinations, function(combo) {
-      paste(paste0(group_var, combo[1]), "-", paste0(group_var, combo[2]))
+      a <- as.character(combo[1]); b <- as.character(combo[2])
+      if (nchar(a) < nchar(b) || (nchar(a) == nchar(b) && a < b)) {
+        paste(paste0(group_var, b), "-", paste0(group_var, a))
+      } else {
+        paste(paste0(group_var, a), "-", paste0(group_var, b))
+      }
     }) %>% unlist()
     return(contrast_strings)
   }
 
+  # Determine grouping variable for automatic contrasts
+  group_var <- config$limma$group_var
+  if (is.null(group_var)) {
+    # Try to infer from the formula (drop constants like 0/1)
+    fvars <- setdiff(all.vars(.formula), c("0", "1"))
+    if (length(fvars) >= 1) {
+      group_var <- fvars[[length(fvars)]]
+    } else {
+      group_var <- "group"
+    }
+  }
+
   contrast_input <- config$limma$contrasts
   if (is.null(contrast_input) || length(contrast_input) == 0) {
-    contrast_input <- generate_contrasts(gct@cdesc, config$limma$group_var %||% "group")
+    contrast_input <- generate_contrasts(gct@cdesc, group_var)
   }
 
   contrast_defs <- parse_named_contrasts(contrast_input)
@@ -171,6 +189,21 @@ run_limma <- function(gct, config, do_impute = TRUE) {
   })
 
   attr(toptables2, "contrast_expression") <- contrast_lookup
+  ## Build a text summary for logs/files
+  dm_cols <- paste(colnames(mod), collapse = ", ")
+  grp_levels <- unique(gct@cdesc[[group_var]]) %||% NA
+  grp_levels <- paste(grp_levels, collapse = ", ")
+  contrast_lines <- paste(paste(names(contrast_lookup), contrast_lookup, sep = ": "), collapse = "\n")
+  summary_text <- paste0(
+    "LIMMA summary\n",
+    "formula: ", deparse(.formula), "\n",
+    "group_var: ", group_var, "\n",
+    "design columns: ", dm_cols, "\n",
+    "levels(", group_var, "): ", grp_levels, "\n",
+    "contrasts:\n",
+    contrast_lines, "\n"
+  )
+  attr(toptables2, "limma_summary") <- summary_text
   return(toptables2)
 }
 

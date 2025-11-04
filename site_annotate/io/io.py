@@ -129,36 +129,47 @@ def convert_tmt_label(shorthand):
     return f"TMT_{normalized_input}_N"
 
 
-def find_expr_file(rec_run_search: str, data_dir):  # TODO fix this
+def find_expr_file(rec_run_search: str, data_dir):
+    """Find mapped site files for a given rec_run_search under data_dir.
+
+    - Searches recursively across subfolders (e.g., meth1/, meth2/)
+    - Returns only site_annotation files; prioritizes reduced_mapped first.
     """
-    data_dir should be absolute path by this point
-    """
-    search_pattern = os.path.join(data_dir, f"{rec_run_search}*reduced*mapped*tsv")
-    results = glob.glob(search_pattern, recursive=True)
+    # Strict patterns first
+    strict_patterns = [
+        os.path.join(data_dir, "**", f"{rec_run_search}*_site_annotation_reduced_mapped.tsv"),
+        os.path.join(data_dir, "**", f"{rec_run_search}*_site_annotation_reduced.tsv"),
+    ]
 
-    if not results:  # try one more time
-        logger.info(f"trying again with not reduced")
-        search_pattern = os.path.join(data_dir, f"{rec_run_search}*tsv")
-        results = glob.glob(search_pattern)
+    for pat in strict_patterns:
+        hits = glob.glob(pat, recursive=True)
+        if hits:
+            dedup = []
+            seen = set()
+            for p in hits:
+                if p not in seen:
+                    dedup.append(p)
+                    seen.add(p)
+            for result in dedup:
+                logger.debug(f"found {result} for {rec_run_search}")
+            return dedup
 
-    if len(results) == 0:
-        logger.warning(f"no files found for {rec_run_search} in {data_dir}, skipping")
+    # Final fallback: any TSV starting with rec_run_search that looks like a site_annotation file
+    fallback_pat = os.path.join(data_dir, "**", f"{rec_run_search}*site_annotation*.tsv")
+    hits = glob.glob(fallback_pat, recursive=True)
+    if hits:
+        dedup = []
+        seen = set()
+        for p in hits:
+            if p not in seen:
+                dedup.append(p)
+                seen.add(p)
+        for result in dedup:
+            logger.debug(f"found {result} for {rec_run_search}")
+        return dedup
 
-    for result in results:
-        logger.debug(f"found {result} for {rec_run_search}")
-        # raise FileNotFoundError(f"no files found for {rec_run_search} in {data_dir}")
-    # if len(results) > 1:
-    #     #if any('mapped'  in x for x in results):
-    #     #    results = [x for x in results if 'mapped' in x]
-    #     results =
-    #     logger.warning(
-    #         f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
-    #     )
-    #     raise FileNotFoundError(
-    #         f"Ambiguous, found multiple files for {rec_run_search}, {str.join(', ', results)}"
-    #     )
-    # if len(results) == 1:
-    return results
+    logger.warning(f"no files found for {rec_run_search} in {data_dir}, skipping")
+    return []
 
 
 def find_expr_files(rec_run_searches, data_dir):

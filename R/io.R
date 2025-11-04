@@ -116,6 +116,26 @@ load_config <- function(file_path, root_dir = NULL) {
 
 
   config$params$filter$nonzero_subgroup <- is_null_config(config$params$filter$nonzero_subgroup)
+  # Parse non_zeros: allow numeric or string fractions like "1/3"
+  if (!is.null(config$params$filter$non_zeros)) {
+    nz <- config$params$filter$non_zeros
+    if (is.character(nz)) {
+      nz_trim <- trimws(nz)
+      if (grepl("^\\s*\\d+\\s*/\\s*\\d+\\s*$", nz_trim)) {
+        parts <- strsplit(nz_trim, "/")[[1]]
+        num <- suppressWarnings(as.numeric(trimws(parts[1])))
+        den <- suppressWarnings(as.numeric(trimws(parts[2])))
+        if (!is.na(num) && !is.na(den) && den != 0) {
+          config$params$filter$non_zeros <- num / den
+        }
+      } else {
+        nz_num <- suppressWarnings(as.numeric(nz_trim))
+        if (!is.na(nz_num)) {
+          config$params$filter$non_zeros <- nz_num
+        }
+      }
+    }
+  }
   config$params$norm$batch <- is_null_config(config$params$norm$batch)
 
   config$params$limma$formula <- is_null_config(config$params$limma$formula)
@@ -139,6 +159,11 @@ load_config <- function(file_path, root_dir = NULL) {
     config$params$advanced <- list()
   }
   config$params$advanced$replace <- is_null_config(config$params$advanced$replace) %||% FALSE
+
+  # QC defaults live with the rest of config parsing
+  if (is.null(config$params$qc)) config$params$qc <- list()
+  if (is.null(config$params$qc$do)) config$params$qc$do <- TRUE
+  if (is.null(config$params$qc$downsample_n)) config$params$qc$downsample_n <- 200000
 
 
   if (is.null(root_dir)) {

@@ -92,6 +92,67 @@ Each run writes `site_annotation_run_summary.txt` under the output directory wit
 - Per‑mod rows with non‑null UniProt (reduced)
 - Per‑mod rows with PSP `acc_id`/UniProt (mapped)
 
+# R Workflow
+
+To run downstream R analysis (heatmaps, LIMMA):
+
+1) Locate mapped site files produced by Python
+
+```
+find ~/amms06/MSPC001482/data/processed_methdev/ -name '*reduced_mapped.tsv'
+```
+
+2) Prepare a config TOML (e.g., `~/amms06/MSPC001482/config/site-annotate.toml`). Key params:
+
+```
+[params]
+gct_file = "/absolute/path/to/site_matrix.gct"   # or .gctx if you have it
+
+[params.norm]
+normalize = true
+log_transform = true
+batch = "None"  # or a cdesc column name
+
+[params.filter]
+non_zeros = 0.8
+nonzero_subgroup = "None"
+
+[params.heatmap]
+do = true
+z_score = true
+cut_by = ["group"]
+
+[params.limma]
+do = false
+formula = "~0 + group"
+contrasts = ["treated_vs_ctrl = treated - ctrl"]
+
+[params.advanced]
+replace = false
+overwrite_export = false
+```
+
+3) Run R pipeline:
+
+```
+Rscript -e "source('R/run.R'); run(\
+  data_dir='~/amms06/MSPC001482/data/processed_methdev', \
+  output_dir='~/amms06/MSPC001482/out', \
+  config_file='~/amms06/MSPC001482/config/site-annotate.toml', \
+  gct_file='/absolute/path/to/site_matrix.gct', \
+  save_env=FALSE)"
+```
+
+Notes:
+
+- If you don’t have a GCT yet, convert your site matrices using your preferred method or use Python utilities to write GCT for your selection.
+- Heatmap selection lists can be set under `[params.heatmap.selection.file_list]` with absolute paths to TSV/CSV/XLSX files containing an `id` column.
+
+Normalization and scaling
+- Median normalization is on by default unless you disable it: set either `params.norm.normalize = true/false` (preferred) or legacy `params.norm.mednorm`.
+- Log transform is off by default. Enable with `params.norm.log_transform = true` to work in log2 space (recommended for LIMMA and volcano plots).
+- Heatmaps use row-wise z-scoring when `[params.heatmap].z_score = true` (default). This is a standardization step, not a log transform.
+
 
 
 ## Analysis and Reporting
@@ -119,6 +180,33 @@ TODO: describe normalization options
 
 
 `site-annotate report -m metadata.tsv -c config.toml --gct /path/to/gct/file`
+
+
+- Volcano plots
+  - Configure thresholds and labeling count(s) in TOML:
+    - `[params.limma] p_cutoff = 0.05`
+    - `[params.limma] logfc_cutoff = 1.0`
+    - `[params.limma] label_top_n_list = [35, 50, 75, 100]`  # generate multiple volcano PDFs, each labeling up to N significant points
+  - Filenames encode the number of labeled points actually used: `volcano_<contrast>_n80.pdf`.
+  - Colors: grey for non‑significant, red for up, blue for down; labels prefer sitename (fallback to id).
+  - Optional ggrepel tuning (defaults shown):
+    - `[params.limma] label_size_base = 2.6`
+    - `[params.limma] label_size_min = 1.6`  # shrinks automatically when many labels
+    - `[params.limma] label_direction = 'both'`  # allow 2D movement; use 'y' to restrict vertical-only
+    - `[params.limma] label_segment_size = 0.25`
+    - `[params.limma] label_segment_alpha = 0.6`
+    - `[params.limma] label_box_padding = 0.25`
+    - `[params.limma] label_point_padding = 0.25`
+    - `[params.limma] label_force = 1.0`
+    - `[params.limma] label_max_time = 2.0`
+    - `[params.limma] label_max_overlaps = 'Inf'`
+
+- Non-zero filtering
+  - `[params.filter].non_zeros` accepts either a number or a string fraction:
+    - As a fraction (0–1): `0.75` means require at least 75% non-zero values.
+    - As an absolute count: `5` means require at least 5 non-zero values.
+    - As a string fraction: `'1/3'` means require at least one third non-zero values.
+  - With `nonzero_subgroup` set (e.g., a metadata column), a site is kept if it meets the cutoff in any subgroup (default behavior).
 
 
 ## Utilities

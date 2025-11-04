@@ -90,18 +90,22 @@ process_gct_file <- function(gct_file, config) {
 
   # Step 2: Normalize GCT
   norm_config <- config$norm
+  # Support both historical 'mednorm' and current 'normalize' flags; default to TRUE for median-normalization
+  mednorm_flag <- if (!is.null(norm_config$normalize)) norm_config$normalize else (norm_config$mednorm %||% TRUE)
+  # Log-transform is opt-in; default FALSE unless explicitly enabled in config
+  log_flag <- norm_config$log_transform %||% FALSE
   log_debug(
     "Normalizing matrix",
     context = list(
-      mednorm = norm_config$mednorm %||% TRUE,
-      log_transform = norm_config$log_transform %||% TRUE
+      mednorm = mednorm_flag,
+      log_transform = log_flag
     )
   )
   normed_gct <- util_tools$normalize_gct(gct,
-    mednorm = norm_config$mednorm %||% TRUE,
-    log_transform = norm_config$log_transform %||% TRUE
+    mednorm = mednorm_flag,
+    log_transform = log_flag
   ) %cached_by%
-    rlang::hash(c(gct@mat, norm_config))
+    rlang::hash(c(gct@mat, mednorm_flag, log_flag))
 
   # Step 3: Filter Non-Zeros
   orig_dim <- dim(normed_gct@mat)
@@ -456,21 +460,55 @@ run <- function(
     context = list(rows = nrow(gct@mat), cols = ncol(gct@mat))
   )
 
+  # QC plots (optional; defaults on via [params.qc])
+  if (isTRUE(config$qc$do %||% TRUE)) {
+    try({
+      qcdir <- file.path(OUTDIR, "qc")
+      if (!dir.exists(qcdir)) dir.create(qcdir, recursive = TRUE)
+      mat_num <- gct@mat
+      # Violin (sample distributions)
+      df_long <- as.data.frame(mat_num)
+      df_long$id <- rownames(mat_num)
+      df_long <- tidyr::pivot_longer(df_long, cols = -id, names_to = "sample", values_to = "value")
+      down_n <- config$qc$downsample_n %||% 200000
+      if (nrow(df_long) > down_n) df_long <- df_long[sample(nrow(df_long), down_n), , drop = FALSE]
+      p_violin <- ggplot2::ggplot(df_long, ggplot2::aes(x = sample, y = value)) +
+        ggplot2::geom_violin(fill = "#a6cee3", color = NA) +
+        ggplot2::geom_boxplot(width = 0.1, outlier.size = 0.2) +
+        ggplot2::coord_flip() +
+        ggplot2::theme_bw(base_size = 9) +
+        ggplot2::labs(title = "Sample distributions (normalized)", x = "Sample", y = "Intensity")
+      ggplot2::ggsave(file.path(qcdir, "violin_distributions.pdf"), p_violin, width = 8.5, height = 11)
+
+      # Non-zero counts per sample
+      nz <- colSums(mat_num > 0, na.rm = TRUE)
+      df_nz <- data.frame(sample = names(nz), nonzero = as.integer(nz))
+      p_nz <- ggplot2::ggplot(df_nz, ggplot2::aes(x = reorder(sample, nonzero), y = nonzero)) +
+        ggplot2::geom_col(fill = "#b2df8a") + ggplot2::coord_flip() + ggplot2::theme_bw(base_size = 9) +
+        ggplot2::labs(title = "Non-zero site counts per sample", x = "Sample", y = "# nonzero")
+      ggplot2::ggsave(file.path(qcdir, "nonzero_counts.pdf"), p_nz, width = 8.5, height = 11)
+    }, silent = TRUE)
+  } else {
+    log_skip("QC disabled", context = list(reason = "config$qc$do == FALSE"))
+  }
+
   .outdir <- file.path(OUTDIR, "export")
   if (!dir.exists(.outdir)) dir.create(.outdir, recursive = TRUE)
-  export_path <- file.path(.outdir, "export")
+  export_prefix <- file.path(.outdir, "export")
   overwrite_export <- config$advanced$overwrite_export %||% FALSE
-  if (file.exists(export_path) && !overwrite_export) {
+  # Detect any existing export GCT/GCTX written previously with size suffixes
+  existing_exports <- list.files(.outdir, pattern = "^export_.*\\.(gct|gctx)$", full.names = TRUE)
+  if (length(existing_exports) > 0 && !overwrite_export) {
     log_skip(
       "Export GCT already exists",
-      context = list(path = export_path, overwrite = overwrite_export)
+      context = list(n_files = length(existing_exports), overwrite = overwrite_export)
     )
   } else {
     log_info(
       "Writing export GCT",
       context = list(outdir = .outdir, overwrite = overwrite_export)
     )
-    gct %>% write_gct(export_path)
+    gct %>% write_gct(export_prefix)
   }
 
   # ==========================================
@@ -517,6 +555,15 @@ run <- function(
     limma_tools <- get_tool_env("limma")
     topTables <- limma_tools$run_limma(gct, config)
 
+    # Write LIMMA summary
+    limma_summary <- attr(topTables, "limma_summary")
+    if (!is.null(limma_summary)) {
+      sumf <- file.path(OUTDIR, "limma", "limma_summary.txt")
+      dir.create(dirname(sumf), recursive = TRUE, showWarnings = FALSE)
+      writeLines(limma_summary, sumf)
+      log_info("Wrote LIMMA summary", context = list(file = sumf))
+    }
+
     topTables %>% purrr::imap(~ { # first loop save tables
       .table <- .x %>% arrange(desc(t))
       contrast_label <- .y
@@ -538,8 +585,118 @@ run <- function(
         dev.off()
         #
 
-        log_info("Wrote LIMMA plot", context = list(file = .outname))
+      log_info("Wrote LIMMA plot", context = list(file = .outname))
       }
+    })
+
+    # Volcano plots per contrast
+    volcdir <- file.path(OUTDIR, "limma", "volcano")
+    if (!dir.exists(volcdir)) dir.create(volcdir, recursive = TRUE)
+    p_cut <- config$limma$p_cutoff %||% 0.05
+    logfc_cut <- config$limma$logfc_cutoff %||% 1.0
+    # Allow either a single value or a list of values
+    label_top_n_list <- config$limma$label_top_n_list %||% config$limma$label_top_n %||% 15
+    label_top_n_list <- unique(as.integer(unlist(label_top_n_list)))
+    label_top_n_list <- label_top_n_list[order(label_top_n_list)]
+    topTables %>% purrr::imap(~ {
+      df <- .x
+      lbl <- .y
+      if (!all(c("logFC", "adj.P.Val") %in% colnames(df))) return(NULL)
+      df$neglog10 <- -log10(pmax(df$adj.P.Val, .Machine$double.xmin))
+      fc_filter_on <- is.finite(logfc_cut) && is.numeric(logfc_cut) && (logfc_cut > 0)
+      if (fc_filter_on) {
+        df$signif <- (df$adj.P.Val <= p_cut) & (abs(df$logFC) >= logfc_cut)
+      } else {
+        df$signif <- (df$adj.P.Val <= p_cut)
+      }
+      df$status <- dplyr::case_when(
+        df$signif & (df$logFC >= (if (fc_filter_on) logfc_cut else 0)) ~ "up",
+        df$signif & (df$logFC <= (if (fc_filter_on) -logfc_cut else 0)) ~ "down",
+        TRUE ~ "ns"
+      )
+      # Choose labels for significant points and rank once
+      has_sitename <- "sitename" %in% colnames(df)
+      df$label_txt <- if (has_sitename) df$sitename else df$id
+      lab_pool <- df[df$signif, , drop = FALSE]
+      if (nrow(lab_pool) > 0) {
+        ord <- order(-lab_pool$neglog10, -abs(lab_pool$logFC))
+        lab_pool <- lab_pool[ord, , drop = FALSE]
+      }
+      safe_lbl <- str_replace_all(lbl, "-", "minus")
+      # Base plot without labels; label count variants below
+      total_n <- nrow(df)
+      sig_n <- sum(df$signif, na.rm = TRUE)
+      cutoff_text <- sprintf("%d / %d at adj.P.Val < %s", sig_n, total_n, format(p_cut, digits = 3))
+      if (fc_filter_on) {
+        cutoff_text <- paste0(cutoff_text, sprintf(" and |log2FC| >= %s", format(logfc_cut, digits = 3)))
+      }
+      p_base <- ggplot2::ggplot(df, ggplot2::aes(x = logFC, y = neglog10)) +
+        ggplot2::geom_point(ggplot2::aes(color = status), size = 0.8, alpha = 0.75, show.legend = FALSE) +
+        ggplot2::geom_hline(yintercept = -log10(p_cut), linetype = "dashed", color = "#999999") +
+        ggplot2::geom_vline(xintercept = c(-logfc_cut, logfc_cut), linetype = "dashed", color = "#999999") +
+        ggplot2::scale_color_manual(values = c(ns = "#bdbdbd", up = "#d7191c", down = "#2c7bb6")) +
+        ggplot2::theme_bw(base_size = 10) +
+        ggplot2::theme(plot.caption.position = "plot", plot.caption = ggplot2::element_text(hjust = 1, size = 8)) +
+        ggplot2::labs(title = paste0("Volcano: ", lbl), x = "log2 fold-change", y = expression(-log[10](adj.P.Val)), caption = cutoff_text)
+
+      # Render one plot per requested label count; if fewer sig than requested, actual label n is used in filename
+      for (n_req in label_top_n_list) {
+        n_actual <- min(n_req, nrow(lab_pool))
+        outf <- file.path(volcdir, paste0("volcano_", make.names(safe_lbl), "_n", n_actual, ".pdf"))
+        if (file.exists(outf) && config$advanced$replace == FALSE) {
+          log_skip("Volcano exists", context = list(file = outf))
+          next
+        }
+        p <- p_base
+        if (n_actual > 0) {
+          lab_df <- utils::head(lab_pool, n_actual)
+          # dynamic label sizing: shrink as label count grows, bounded by label_size_min
+          label_size_base <- as.numeric(config$limma$label_size_base %||% 2.6)
+          label_size_min <- as.numeric(config$limma$label_size_min %||% 1.6)
+          label_size <- label_size_base
+          if (n_actual > 30) {
+            label_size <- max(label_size_min, label_size_base * sqrt(30 / n_actual))
+          }
+
+          if (requireNamespace("ggrepel", quietly = TRUE)) {
+            # ggrepel tuning knobs from config
+            seg_size <- as.numeric(config$limma$label_segment_size %||% 0.25)
+            seg_alpha <- as.numeric(config$limma$label_segment_alpha %||% 0.6)
+            box_pad <- as.numeric(config$limma$label_box_padding %||% 0.25)
+            point_pad <- as.numeric(config$limma$label_point_padding %||% 0.25)
+            repel_force <- as.numeric(config$limma$label_force %||% 1.0)
+            max_time <- as.numeric(config$limma$label_max_time %||% 2.0)
+            max_overlaps <- config$limma$label_max_overlaps %||% Inf
+            # sanitize label direction
+            label_dir_raw <- config$limma$label_direction %||% "both"
+            valid_dirs <- c("both", "x", "y")
+            label_dir <- if (is.character(label_dir_raw) && length(label_dir_raw) >= 1 && label_dir_raw[1] %in% valid_dirs) label_dir_raw[1] else "both"
+            p <- p + ggrepel::geom_text_repel(
+              data = lab_df,
+              ggplot2::aes(label = label_txt),
+              size = label_size,
+              max.overlaps = max_overlaps,
+              min.segment.length = 0.05,
+              box.padding = box_pad,
+              point.padding = point_pad,
+              segment.size = seg_size,
+              segment.alpha = seg_alpha,
+              force = repel_force,
+              max.time = max_time,
+              direction = label_dir
+            )
+          } else {
+            p <- p + ggplot2::geom_text(
+              data = lab_df,
+              ggplot2::aes(label = label_txt),
+              size = label_size, vjust = -0.2
+            )
+          }
+        }
+        ggplot2::ggsave(outf, p, width = 6.8, height = 5.4)
+        log_info("Wrote volcano plot", context = list(file = outf, n_labels = n_actual))
+      }
+      NULL
     })
 
     limma_topn <- config$limma$topn %||% c(50, 100)
@@ -672,6 +829,12 @@ run <- function(
               subset_gct(cid = rownames(.cdesc)) %>%
               util_tools$scale_gct() # %>%
             .sub_gct_z <- sub_gct_z %>% subset_gct(rid = .subsel$id)
+
+            # Skip subset heatmap if the selected columns match the full set (duplicate of 'all')
+            if (identical(sort(colnames(.sub_gct_z@mat)), sort(colnames(gct@mat)))) {
+              log_skip("Subset equals full set; skipping duplicate", context = list(contrast = contrast_label))
+              return(NULL)
+            }
 
 
             .nrow <- nrow(.top_tvals)

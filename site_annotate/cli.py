@@ -996,7 +996,7 @@ def _write_doctor_summary(df, site_reduced, site_reduced_mapped, outdir: pathlib
         lines.append(f"  {mod}: rows={total}, uniprot_non_null={uni_non}, psp_acc_non_null={acc_non}")
     # PSP data presence
     lines.append("")
-    lines.append(f"fasta: {fast a_path}")
+    lines.append(f"fasta: {fast_a_path}")
     lines.append(f"psp_dir: {io_external.data_dir}")
     # Write file
     summary = outdir / "site_annotation_run_summary.txt"
