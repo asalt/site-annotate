@@ -461,115 +461,13 @@ run <- function(
   )
 
   # QC plots (optional; defaults on via [params.qc])
-  if (isTRUE(config$qc$do %||% TRUE)) {
-    try({
-      qcdir <- file.path(OUTDIR, "qc")
-      if (!dir.exists(qcdir)) dir.create(qcdir, recursive = TRUE)
-      mat_num <- gct@mat
-      # Determine sample ordering: prefer config$extra$sample_order, else infer via utils, else current order
-      sample_order_cfg <- tryCatch(config$extra$sample_order, error = function(e) NULL)
-      util_tools_local <- get_tool_env("utils")
-      all_samples <- colnames(mat_num)
-      if (!is.null(sample_order_cfg) && length(sample_order_cfg) > 0) {
-        # Keep only samples present; preserve provided order
-        sample_order_levels <- intersect(sample_order_cfg, all_samples)
-        if (length(sample_order_levels) == 0) sample_order_levels <- all_samples
-      } else {
-        # Try to infer ordering from names
-        inferred <- tryCatch(util_tools_local$infer_ordered_factor(all_samples), error = function(e) NULL)
-        if (!is.null(inferred)) {
-          sample_order_levels <- levels(inferred)
-        } else {
-          sample_order_levels <- all_samples
-        }
-      }
-      # Violin (sample distributions)
-      df_long <- as.data.frame(mat_num)
-      df_long$id <- rownames(mat_num)
-      df_long <- tidyr::pivot_longer(df_long, cols = -id, names_to = "sample", values_to = "value")
-      down_n <- config$qc$downsample_n %||% 200000
-      if (nrow(df_long) > down_n) df_long <- df_long[sample(nrow(df_long), down_n), , drop = FALSE]
-      df_long$sample <- factor(df_long$sample, levels = sample_order_levels)
-      p_violin <- ggplot2::ggplot(df_long, ggplot2::aes(x = sample, y = value)) +
-        ggplot2::geom_violin(fill = "#a6cee3", color = NA) +
-        ggplot2::geom_boxplot(width = 0.1, outlier.size = 0.2) +
-        ggplot2::coord_flip() +
-        ggplot2::theme_bw(base_size = 9) +
-        ggplot2::labs(title = "Sample distributions (normalized)", x = "Sample", y = "Intensity")
-      ggplot2::ggsave(file.path(qcdir, "violin_distributions.pdf"), p_violin, width = 8.5, height = 11)
-
-      # Non-zero counts per sample
-      nz <- colSums(mat_num > 0, na.rm = TRUE)
-      df_nz <- data.frame(sample = names(nz), nonzero = as.integer(nz))
-      df_nz$sample <- factor(df_nz$sample, levels = sample_order_levels)
-      p_nz <- ggplot2::ggplot(df_nz, ggplot2::aes(x = sample, y = nonzero)) +
-        ggplot2::geom_col(fill = "#b2df8a") + ggplot2::coord_flip() + ggplot2::theme_bw(base_size = 9) +
-        ggplot2::labs(title = "Non-zero site counts per sample", x = "Sample", y = "# nonzero")
-      ggplot2::ggsave(file.path(qcdir, "nonzero_counts.pdf"), p_nz, width = 8.5, height = 11)
-
-      # STY composition barplots (overall)
-      if ("AA" %in% colnames(gct@rdesc)) {
-        aa_df <- data.frame(AA = gct@rdesc$AA, stringsAsFactors = FALSE)
-        aa_df$AA <- as.character(aa_df$AA)
-        aa_df <- aa_df[!is.na(aa_df$AA), , drop = FALSE]
-        aa_df <- aa_df[aa_df$AA %in% c("S", "T", "Y"), , drop = FALSE]
-        if (nrow(aa_df) > 0) {
-          sty_counts <- as.data.frame(table(aa_df$AA), stringsAsFactors = FALSE)
-          colnames(sty_counts) <- c("AA", "count")
-          sty_counts$AA <- factor(sty_counts$AA, levels = c("S", "T", "Y"))
-          p_sty <- ggplot2::ggplot(sty_counts, ggplot2::aes(x = AA, y = count, fill = AA)) +
-            ggplot2::geom_col(width = 0.65, show.legend = FALSE) +
-            ggplot2::scale_fill_manual(values = c(S = "#8da0cb", T = "#66c2a5", Y = "#fc8d62")) +
-            ggplot2::theme_bw(base_size = 11) +
-            ggplot2::labs(title = "Site composition (S/T/Y)", x = "Residue", y = "# sites")
-          ggplot2::ggsave(file.path(qcdir, "sty_counts_total.pdf"), p_sty, width = 5.6, height = 4.2)
-
-          # Y-only with independent scale (use a single bar)
-          y_only <- subset(sty_counts, AA == "Y")
-          if (nrow(y_only) == 1) {
-            p_y <- ggplot2::ggplot(y_only, ggplot2::aes(x = AA, y = count)) +
-              ggplot2::geom_col(fill = "#fc8d62", width = 0.5, show.legend = FALSE) +
-              ggplot2::theme_bw(base_size = 11) +
-              ggplot2::scale_x_discrete(labels = c("Y")) +
-              ggplot2::labs(title = "Tyrosine-only site count", x = "Residue", y = "# sites")
-            ggplot2::ggsave(file.path(qcdir, "sty_counts_Y_only.pdf"), p_y, width = 3.6, height = 4.0)
-          }
-
-          # Per-sample STY composition (based on non-zero intensities per sample)
-          present_long <- as.data.frame(mat_num)
-          present_long$id <- rownames(mat_num)
-          present_long <- tidyr::pivot_longer(present_long, cols = -id, names_to = "sample", values_to = "value")
-          present_long <- dplyr::filter(present_long, is.finite(value), value > 0)
-          aa_map <- data.frame(id = rownames(gct@rdesc), AA = as.character(gct@rdesc$AA), stringsAsFactors = FALSE)
-          present_long <- dplyr::left_join(present_long, aa_map, by = "id")
-          present_long <- dplyr::filter(present_long, AA %in% c("S", "T", "Y"))
-          if (nrow(present_long) > 0) {
-            sty_by_sample <- present_long %>%
-              dplyr::group_by(sample, AA) %>%
-              dplyr::summarize(count = dplyr::n(), .groups = "drop")
-
-            # Per-sample stacked STY (total)
-            sty_by_sample$AA <- factor(sty_by_sample$AA, levels = c("S", "T", "Y"))
-            p_sty_by <- ggplot2::ggplot(sty_by_sample, ggplot2::aes(y = factor(sample, levels = sample_order_levels), x = count, fill = AA)) +
-              ggplot2::geom_col(width = 0.7, position = "stack") +
-              ggplot2::scale_fill_manual(values = c(S = "#8da0cb", T = "#66c2a5", Y = "#fc8d62")) +
-              ggplot2::theme_bw(base_size = 9) +
-              ggplot2::labs(title = "S/T/Y site counts per sample (non-zero)", x = "# sites", y = "Sample")
-            ggplot2::ggsave(file.path(qcdir, "sty_counts_by_sample_STY.pdf"), p_sty_by, width = 7.8, height = 0.3 + 0.28 * length(sample_order_levels))
-
-            # Y-only per-sample with independent scale, include zeros explicitly then order by config/infer
-            y_by_sample <- sty_by_sample %>% dplyr::filter(AA == "Y") %>%
-              tidyr::complete(sample = all_samples, fill = list(count = 0))
-            y_by_sample$sample <- factor(y_by_sample$sample, levels = sample_order_levels)
-            p_y_by <- ggplot2::ggplot(y_by_sample, ggplot2::aes(y = sample, x = count)) +
-              ggplot2::geom_col(fill = "#fc8d62", width = 0.7) +
-              ggplot2::theme_bw(base_size = 9) +
-              ggplot2::labs(title = "Y site counts per sample (non-zero)", x = "# sites (Y)", y = "Sample")
-            ggplot2::ggsave(file.path(qcdir, "sty_counts_by_sample_Y.pdf"), p_y_by, width = 6.8, height = 0.3 + 0.28 * length(all_samples))
-          }
-        }
-      }
-    }, silent = TRUE)
+  if (config$qc$do %||% TRUE) {
+    qc_tools <- get_tool_env("qc")
+    qc_tools$generate_qc_reports(
+      gct = gct,
+      config = config,
+      output_dir = OUTDIR
+    )
   } else {
     log_skip("QC disabled", context = list(reason = "config$qc$do == FALSE"))
   }

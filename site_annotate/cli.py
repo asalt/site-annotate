@@ -42,6 +42,7 @@ from . import mapper
 from . import reduce
 from . import tasks
 from .tasks import maybe_compile_latex, compile_latex_from_template, maybe_ollama_summarize
+from .spectra_plot import plot_top_psms_from_fragpipe
 
 logger = log.get_logger(__file__)
 
@@ -311,6 +312,167 @@ def validate_meta(
     logger.info(f"successfully validated {metadata_file}")
 
     return meta_df_final_collection
+
+
+@main.command(name="plot-spectra")
+@click.option(
+    "--psm-tsv",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="FragPipe psm.tsv file to select PSMs from.",
+)
+@click.option(
+    "--raw-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    required=True,
+    help="Directory containing mzML files (e.g. FragPipe raw/IMAC).",
+)
+@click.option(
+    "-o",
+    "--out-dir",
+    type=click.Path(exists=False, file_okay=False, dir_okay=True),
+    default="spectra",
+    show_default=True,
+    help="Output directory for spectrum PNGs.",
+)
+@click.option(
+    "-n",
+    "--n-top",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Number of top PSMs to plot, sorted by Hyperscore.",
+)
+@click.option(
+    "--qvalue-cutoff",
+    type=float,
+    default=0.01,
+    show_default=True,
+    help="Maximum Qvalue for PSM selection.",
+)
+@click.option(
+    "--min-localization",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Minimum localization probability for phospho sites.",
+)
+@click.option(
+    "--phospho-loc-col",
+    type=str,
+    default="STY:79.9663 Best Localization",
+    show_default=True,
+    help="Column name used for phospho localization score.",
+)
+@click.option(
+    "--annotate/--no-annotate",
+    default=False,
+    show_default=True,
+    help="Use spectrum_utils styling for spectra (no fragment labels yet).",
+)
+@click.option(
+    "--mz-min",
+    type=float,
+    default=None,
+    show_default=True,
+    help="Minimum m/z to display (applied to all plots).",
+)
+@click.option(
+    "--mz-max",
+    type=float,
+    default=None,
+    show_default=True,
+    help="Maximum m/z to display (applied to all plots).",
+)
+@click.option(
+    "--max-labels-plain",
+    "--plain-max-labels",
+    type=str,
+    default="auto",
+    show_default=True,
+    help="For plain plots, maximum number of peaks to label with m/z; use 'auto' for heuristic labeling.",
+)
+@click.option(
+    "--max-aa-length",
+    type=int,
+    default=None,
+    show_default=True,
+    help="Only consider PSMs with Peptide Length <= this value when selecting top PSMs.",
+)
+@click.option(
+    "--html/--no-html",
+    default=False,
+    show_default=True,
+    help="Also write interactive HTML spectra (annotated only).",
+)
+@click.option(
+    "--verbose/--no-verbose",
+    default=False,
+    show_default=True,
+    help="Print progress information while reading mzML and plotting spectra.",
+)
+def plot_spectra(
+    psm_tsv,
+    raw_dir,
+    out_dir,
+    n_top,
+    qvalue_cutoff,
+    min_localization,
+    phospho_loc_col,
+    annotate,
+    mz_min,
+    mz_max,
+    max_labels_plain,
+    max_aa_length,
+    html,
+    verbose,
+):
+    """
+    Plot top-scoring phospho MS/MS spectra from a FragPipe psm.tsv file.
+
+    Examples:
+
+      site-annotate plot-spectra \\
+        --psm-tsv path/to/psm.tsv \\
+        --raw-dir path/to/raw/IMAC \\
+        --out-dir spectra \\
+        --n-top 4
+    """
+    psm_path = pathlib.Path(psm_tsv).absolute()
+    raw_dir_path = pathlib.Path(raw_dir).absolute()
+    out_dir_path = pathlib.Path(out_dir).absolute()
+    out_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # interpret max-labels-plain
+    plain_max_labels = None
+    if isinstance(max_labels_plain, str):
+        if max_labels_plain.lower() != "auto":
+            try:
+                plain_max_labels = int(max_labels_plain)
+            except ValueError:
+                raise click.BadParameter(
+                    f"--max-labels-plain must be an integer or 'auto', got {max_labels_plain!r}"
+                )
+    else:
+        plain_max_labels = max_labels_plain
+
+    written = plot_top_psms_from_fragpipe(
+        psm_path=psm_path,
+        raw_dir=raw_dir_path,
+        out_dir=out_dir_path,
+        n_top=n_top,
+        qvalue_cutoff=qvalue_cutoff,
+        min_localization=min_localization,
+        phospho_loc_col=phospho_loc_col,
+        annotated=annotate,
+        mz_min=mz_min,
+        mz_max=mz_max,
+        max_labels=plain_max_labels,
+        max_length=max_aa_length,
+        write_html=html,
+        verbose=verbose,
+    )
+    logger.info(f"Wrote {len(written)} spectra to {out_dir_path}")
 
 
 @main.command()
