@@ -227,12 +227,15 @@ generate_global_heatmap <- function(gct_z, cut_by, cluster_columns, config, outd
     meta_to_exclude = config$heatmap$legend_exclude %||% NULL,
     column_title = friendly_name
   )
+  ht_dims <- attr(ht_draw_code, "heatmap_dims")
+  n_rows_plot <- if (!is.null(ht_dims) && !is.null(ht_dims$nrow)) ht_dims$nrow else nrow(gct_z_subset@mat)
+  n_cols_plot <- if (!is.null(ht_dims) && !is.null(ht_dims$ncol)) ht_dims$ncol else ncol(gct_z_subset@mat)
 
   # Prepare file paths
   outf <- heatmap_tools$prepare_heatmap_output_path(outdir,
     "heatmap",
     outname,
-    prefix = glue::glue("X{nrow(gct_z_subset@mat)}x{ncol(gct_z_subset@mat)}"),
+    prefix = glue::glue("X{n_rows_plot}x{n_cols_plot}"),
     # prefix = list(nrow=nrow(gct_z_subset@mat), ncol(gct_z_subset@mat)),
     cut_by = cut_by,
     cluster_rows = T,

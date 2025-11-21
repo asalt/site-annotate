@@ -605,6 +605,20 @@ make_heatmap_fromgct <- function(
   }
   # browser()
 
+  heatmap_rows <- nrow(mat_data)
+  heatmap_cols <- ncol(gct@mat)
+  column_title_final <- column_title
+  if (is.null(column_title_final)) column_title_final <- ""
+  if (nzchar(column_title_final)) {
+    if (grepl("n=\\d+", column_title_final)) {
+      column_title_final <- sub("n=\\d+", paste0("n=", heatmap_rows), column_title_final)
+    } else {
+      column_title_final <- paste0(column_title_final, " (n=", heatmap_rows, ")")
+    }
+  } else {
+    column_title_final <- paste0("n=", heatmap_rows)
+  }
+
   row_labels <- mat_data$sitename
   heatmap_legend_param <- list(title = "zscore")
   heatmap_matrix_width <- NULL
@@ -791,11 +805,12 @@ make_heatmap_fromgct <- function(
   do_draw <- function() {
     draw(ht,
       heatmap_legend_side = "bottom",
-      column_title = column_title,
+      column_title = column_title_final,
       column_title_gp = gpar(fontsize = 13, fontface = "bold", just = "left"),
       padding = unit(c(2, 24, 2, 24), "mm"), # top, left, bottom, right
     )
   }
+  attr(do_draw, "heatmap_dims") <- list(nrow = heatmap_rows, ncol = heatmap_cols)
 
   # log_msg(debug = paste0("save func: ", class(save_func) %>% as.character()))
   # log_msg(debug = paste0("is null save func: ", is.null(save_func)))

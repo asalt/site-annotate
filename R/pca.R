@@ -81,6 +81,11 @@ plot_biplot <- function(
 
   n_features <- nrow(pca_object$loadings)
   footnote <- paste0("n = ", as.character(n_features))
+  if (nzchar(title)) {
+    title_final <- paste0(title, " (n=", n_features, ")")
+  } else {
+    title_final <- paste0("PCA (n=", n_features, ")")
+  }
 
 
   plts <- pcs %>%
@@ -121,7 +126,7 @@ plot_biplot <- function(
           legendPosition = "right",
           legendLabSize = 9,
           encircle = encircle,
-          title = title,
+          title = title_final,
           max.overlaps = Inf,
           maxoverlapsConnectors = Inf,
           ntopLoadings = ntopLoadings %||% 5,
