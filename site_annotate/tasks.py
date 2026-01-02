@@ -9,32 +9,40 @@ from typing import Optional, Dict, Any
 
 
 def run_r_code_with_params(params_dict, interactive=False):
-    # Generate R code dynamically
-    r_code = "\n".join([f"{key} <- '{value}'" for key, value in params_dict.items()])
-    run_source = os.path.join(pathlib.Path(__file__).parent, "..", "R", "run.R")
+    def _r_literal(value: Any) -> str:
+        if value is None:
+            return "NULL"
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if isinstance(value, (int, float)):
+            return str(value)
+        text = str(value)
+        text = text.replace("\\", "\\\\").replace("'", "\\'")
+        return f"'{text}'"
 
     run_source = pathlib.Path(__file__).parent / ".." / "R" / "run.R"
+    run_source = run_source.resolve()
     r_folder = run_source.parent
 
-    for key in ("data_dir", "config_file"):  # , "gct_file"):
+    for key in ("data_dir", "config_file"):
         if key not in params_dict:
             raise ValueError(f"{key} not found")
 
-    gct_file = params_dict.get("gct_file", "NULL") # if it is null will try to load it from config file
+    # Always define common parameters so the R call can safely reference them.
+    params_dict = dict(params_dict)
+    params_dict.setdefault("output_dir", None)
+    params_dict.setdefault("gct_file", None)
+    params_dict.setdefault("save_env", False)
 
-    assert os.path.exists(run_source), f"File not found: {run_source}"
+    assert run_source.exists(), f"File not found: {run_source}"
 
-    # Escape curly braces in the R code
-    r_code += f"""
+    r_assignments = "\n".join([f"{key} <- {_r_literal(value)}" for key, value in params_dict.items()])
+    r_code = f"""{r_assignments}
+
     # Interactive debugging support
     options(error=recover)
-    # if (exists("debug_mode") && debug_mode) {{
-    #     options(error = recover)
-    # }}
-    setwd("{r_folder}")
-    source("{run_source}")
-
-    gct_file <- {gct_file}
+    setwd({_r_literal(str(r_folder))})
+    source({_r_literal(str(run_source))})
 
     # Run the main function
     print(paste0('Output dir is: ', output_dir))
@@ -46,7 +54,9 @@ def run_r_code_with_params(params_dict, interactive=False):
         save_env = save_env
     )
     """
-    print(r_code)  # Optional: Print the R code for debugging
+
+    if interactive or os.environ.get("SITE_ANNOTATE_DEBUG_R"):
+        print(r_code)  # Optional: Print the R code for debugging
 
     # Create a temporary R script
     with tempfile.NamedTemporaryFile(

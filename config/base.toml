@@ -1,5 +1,6 @@
 [params]
 gct_file = ''
+output_dir = ''  # optional; defaults to --output-dir or --data-dir
 
 [params.norm]
 normalize = false
@@ -47,6 +48,34 @@ top_n = [25, 50, 75, 100]
 [params.totalprotein]
 do = true
 volcanodir = ''
+gct_prof = ''
+genes = []
+genes_file = ''
+topn_genes = 0
+group_var = ''
+heatmap_meta_cols = []
+heatmap_zscore = true
+
+[params.qc]
+do = true
+level = 1
+downsample_n = 200000
+
+# "Level 2 QC" toggles (unsupervised summaries):
+# - If `cor_do` is unset, correlations default to on at `level >= 2`.
+cor_method = "pearson"
+cor_use_zscore = false
+
+# Prefer the main `[params.pca]` routine; QC PCA is off by default.
+pca_do = false
+pca_topn = 5000
+
+[params.qc.missingness]
+value_threshold = ''
+# If `upset_do` is unset, UpSet defaults to on at `level >= 2` (requires ComplexUpset).
+upset_top = 8
+upset_min_intersections = 2
+upset_max_features = 5000
 
 [params.extra]
 sample_order = []

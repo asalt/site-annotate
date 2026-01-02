@@ -224,6 +224,8 @@ def _call_heatmap_script(
     cluster_rows: bool,
     cluster_cols: bool,
     zscore: bool,
+    cdesc_path: Optional[Path] = None,
+    meta_cols: Optional[List[str]] = None,
     scale_min: Optional[float] = None,
     scale_max: Optional[float] = None,
 ) -> None:
@@ -249,6 +251,10 @@ def _call_heatmap_script(
         "--zscore",
         str(bool(zscore)).upper(),
     ]
+    if cdesc_path is not None:
+        cmd.extend(["--cdesc", str(cdesc_path)])
+        if meta_cols:
+            cmd.extend(["--meta-cols", ",".join(meta_cols)])
     if scale_min is not None and scale_max is not None:
         cmd.extend(["--scale-min", str(float(scale_min))])
         cmd.extend(["--scale-max", str(float(scale_max))])
@@ -270,6 +276,8 @@ def generate_gene_heatmaps(
     gene_col: Optional[str] = None,
     debug: bool = False,
     generate_zscore: bool = True,
+    cdesc: Optional[pd.DataFrame] = None,
+    meta_cols: Optional[List[str]] = None,
 ) -> Tuple[int, List[str], List[str]]:
     """
     Generate per-gene heatmaps using ComplexHeatmap via an R script.
@@ -282,6 +290,13 @@ def generate_gene_heatmaps(
     gene_root = output_dir / "genes"
     gene_root.mkdir(parents=True, exist_ok=True)
 
+    cdesc_path: Optional[Path] = None
+    if cdesc is not None:
+        cdesc_path = gene_root / "cdesc.tsv"
+        if force_data or not cdesc_path.exists():
+            cdesc_out = cdesc.reindex(samples).copy()
+            cdesc_out.to_csv(cdesc_path, sep="\t", index=True)
+
     generated = 0
     missing = []
     debug_lines: List[str] = []
@@ -290,6 +305,10 @@ def generate_gene_heatmaps(
     emat_values = emat.to_numpy(dtype=float)
     # raw_min = np.nanmin(emat_values) if emat_values.size else None
     # raw_max = np.nanmax(emat_values) if emat_values.size else None
+    valid_rows = None
+    if emat_values.size:
+        valid_rows = ~np.all(np.isnan(emat_values), axis=1)
+        emat_values = emat_values[valid_rows]
     raw_min = np.nanpercentile(emat_values, 0.5) if emat_values.size else None
     raw_max = np.nanpercentile(emat_values, 95) if emat_values.size else None
 
@@ -369,6 +388,8 @@ def generate_gene_heatmaps(
                             cluster_rows=cr,
                             cluster_cols=cc,
                             zscore=zflag,
+                            cdesc_path=cdesc_path,
+                            meta_cols=meta_cols,
                             scale_min=smin,
                             scale_max=smax,
                         )

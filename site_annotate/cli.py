@@ -15,6 +15,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import pandas as pd
+import numpy as np
 from itertools import product
 
 from rapidfuzz import process, fuzz
@@ -85,6 +86,32 @@ def get_templates(TEMPLATE_PATH):
 REPORT_TEMPLATES = get_templates(TEMPLATE_PATH)
 
 
+# --- small TOML helpers (report/pipeline config) ---
+def _load_toml(path: pathlib.Path) -> dict:
+    try:
+        import tomllib  # py>=3.11
+    except ImportError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore
+
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def _as_path(value: object) -> pathlib.Path | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or value.lower() in {"none", "null"}:
+        return None
+    return pathlib.Path(value)
+
+
+def _resolve_path(path: pathlib.Path, base: pathlib.Path) -> pathlib.Path:
+    return (path if path.is_absolute() else (base / path)).resolve()
+
+
 # Deprecated flag support: --uniprot-check -> --refresh-uniprot
 def _deprecated_uniprot_check(ctx, param, value):
     if value:
@@ -99,6 +126,36 @@ def prepare_params(
 ):
     params_dict = {}
 
+    def _infer_output_dir(config_path: pathlib.Path, data_dir_path: pathlib.Path) -> pathlib.Path | None:
+        """
+        Best-effort output directory inference:
+        - Prefer explicit `params.output_dir` in TOML (relative paths resolved against `data_dir`).
+        - Otherwise, if `params.totalprotein.volcanodir` exists, write next to it under `site-annotate/`.
+        """
+        try:
+            cfg = _load_toml(config_path)
+        except Exception:
+            return None
+
+        params = cfg.get("params") if isinstance(cfg, dict) else None
+        if not isinstance(params, dict):
+            return None
+
+        explicit = _as_path(params.get("output_dir"))
+        if explicit is not None:
+            return explicit if explicit.is_absolute() else (data_dir_path / explicit)
+
+        tp = params.get("totalprotein")
+        if not isinstance(tp, dict):
+            return None
+        if isinstance(tp.get("do"), bool) and tp.get("do") is False:
+            return None
+        volcanodir = _as_path(tp.get("volcanodir"))
+        if volcanodir is None:
+            return None
+        volcanodir_abs = _resolve_path(volcanodir, data_dir_path)
+        return volcanodir_abs.parent / "site-annotate"
+
     # Resolve paths
     if config:
         params_dict["config_file"] = str(pathlib.Path(config).absolute())
@@ -109,13 +166,18 @@ def prepare_params(
     if data_dir:
         params_dict["data_dir"] = str(pathlib.Path(data_dir).absolute())
     if output_dir is None:
-        output_dir = data_dir or "."
+        output_dir_guess = None
+        if config and data_dir:
+            output_dir_guess = _infer_output_dir(
+                pathlib.Path(config).absolute(), pathlib.Path(data_dir).absolute()
+            )
+        output_dir = str(output_dir_guess) if output_dir_guess is not None else (data_dir or ".")
     output_dir = pathlib.Path(output_dir).absolute()
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     params_dict["output_dir"] = str(output_dir)
     params_dict["root_dir"] = str(root_dir)
-    params_dict["save_env"] = str(save_env).lower()
+    params_dict["save_env"] = bool(save_env)
 
     # Handle metadata
     if metadata and not gct:
@@ -129,6 +191,300 @@ def prepare_params(
         logger.info(f"Wrote validated metadata: {validated_meta_path}")
 
     return params_dict
+
+
+def _maybe_run_totalprotein_compare(
+    *,
+    config: str | None,
+    data_dir: str | None,
+    output_dir: str,
+    gct: str | None,
+) -> None:
+    """
+    If `[params.totalprotein] do=true` and a protein GCT is available, compute a site/protein ratio matrix.
+    Writes outputs under `<output_dir>/<site_gct_stem>/totalprotein/site_vs_protein/`.
+    """
+    if not config:
+        return
+    if not data_dir:
+        return
+
+    config_path = pathlib.Path(config).absolute()
+    data_dir_path = pathlib.Path(data_dir).absolute()
+    outdir_root = pathlib.Path(output_dir).absolute()
+
+    try:
+        cfg = _load_toml(config_path)
+    except Exception as exc:
+        logger.warning("Failed to read config TOML for totalprotein integration: %s", exc)
+        return
+
+    params = cfg.get("params") if isinstance(cfg, dict) else None
+    if not isinstance(params, dict):
+        return
+
+    tp = params.get("totalprotein")
+    if not isinstance(tp, dict):
+        return
+    if not bool(tp.get("do", False)):
+        return
+
+    def _resolve_from_cfg(value: object) -> pathlib.Path | None:
+        p = _as_path(value)
+        if p is None:
+            return None
+        return _resolve_path(p, data_dir_path)
+
+    # Resolve site GCT (CLI --gct wins; else TOML params.gct_file)
+    site_gct_path: pathlib.Path | None = None
+    if gct:
+        candidate = pathlib.Path(gct).absolute()
+        if candidate.is_dir():
+            cands = sorted(candidate.glob("*.gct")) + sorted(candidate.glob("*.gctx"))
+            if len(cands) == 1:
+                site_gct_path = cands[0].absolute()
+            else:
+                logger.warning(
+                    "--gct was a directory with %d candidates; skipping site/protein compare",
+                    len(cands),
+                )
+                return
+        else:
+            site_gct_path = candidate
+    if site_gct_path is None:
+        site_gct_path = _resolve_from_cfg(params.get("gct_file"))
+
+    if site_gct_path is None or not site_gct_path.exists():
+        logger.warning("totalprotein enabled but site GCT is missing; skipping")
+        return
+
+    # Resolve protein GCT (prefer [params.totalprotein] gct_prof; allow legacy fallbacks)
+    prot_gct_path = _resolve_from_cfg(
+        tp.get("gct_prof")
+        or tp.get("prof_gct")
+        or params.get("gct_prof")
+        or params.get("prof_gct")
+    )
+    if prot_gct_path is None or not prot_gct_path.exists():
+        logger.warning(
+            "totalprotein enabled but protein GCT is missing (expected params.totalprotein.gct_prof); skipping"
+        )
+        return
+
+    join_on = str(tp.get("join_on", "auto"))
+    agg = str(tp.get("agg", "mean"))
+    metric = str(tp.get("metric", "log2ratio"))
+    if agg not in {"mean", "median", "sum"}:
+        agg = "mean"
+    if metric not in {"ratio", "log2ratio"}:
+        metric = "log2ratio"
+    drop_unmatched = bool(tp.get("drop_unmatched", False))
+    try:
+        eps = float(tp.get("eps", 1e-6))
+    except Exception:
+        eps = 1e-6
+
+    adv = params.get("advanced")
+    replace = True
+    if isinstance(adv, dict) and isinstance(adv.get("replace"), bool):
+        replace = bool(adv.get("replace"))
+
+    try:
+        emat_s, cdesc_s, rdesc_s = read_gct(str(site_gct_path))
+        emat_p, _cdesc_p, rdesc_p = read_gct(str(prot_gct_path))
+        (
+            ratio_df,
+            log2ratio_df,
+            rdesc_out,
+            samples,
+            site_join_key,
+            prot_join_key,
+            matched_rows,
+            total_rows,
+        ) = compute_site_vs_protein(
+            emat_s,
+            rdesc_s,
+            emat_p,
+            rdesc_p,
+            join_on=join_on,
+            agg=agg,
+            eps=eps,
+            drop_unmatched=drop_unmatched,
+        )
+    except Exception as exc:
+        logger.warning("Failed totalprotein site-vs-protein compare: %s", exc)
+        return
+
+    subdir = site_gct_path.stem
+    outdir = outdir_root / subdir / "totalprotein" / "site_vs_protein"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Write TSVs with rdesc joined (similar to `site-annotate compare-protein`)
+    base = outdir / f"site_vs_protein_{len(ratio_df)}x{len(samples)}"
+    ratio_out = rdesc_out.join(ratio_df)
+    log2ratio_out = rdesc_out.join(log2ratio_df)
+    ratio_tsv = pathlib.Path(str(base) + "_ratio.tsv")
+    log2ratio_tsv = pathlib.Path(str(base) + "_log2ratio.tsv")
+    if replace or not ratio_tsv.exists():
+        ratio_out.to_csv(ratio_tsv, sep="\t", index=True, header=True)
+    if replace or not log2ratio_tsv.exists():
+        log2ratio_out.to_csv(log2ratio_tsv, sep="\t", index=True, header=True)
+
+    # Summary
+    summary_lines = [
+        "SITE vs PROTEIN (report integration)",
+        f"site_gct: {site_gct_path}",
+        f"protein_gct: {prot_gct_path}",
+        f"join_on: site='{site_join_key}', protein='{prot_join_key}'; agg={agg}; eps={eps}; drop_unmatched={drop_unmatched}",
+        f"samples (intersection): {len(samples)}",
+        f"matched site rows: {matched_rows}/{total_rows}",
+        "",
+    ]
+    summary_path = outdir / "compare_protein_summary.txt"
+    if replace or not summary_path.exists():
+        summary_path.write_text("\n".join(summary_lines))
+
+    cdesc_out = cdesc_s.loc[samples]
+    metric_df = log2ratio_df if metric == "log2ratio" else ratio_df
+
+    # Optional: write a GCT for the chosen metric for downstream R plotting
+    try:
+        gct_prefix = outdir / f"site_vs_protein_{metric}"
+        # `write_gct` appends _<rows>x<cols>.gct; skip if it exists and replace is false
+        existing = list(outdir.glob(gct_prefix.name + "_*x*.gct"))
+        if replace or not existing:
+            write_gct_file(
+                metric_df,
+                cdesc=cdesc_out,
+                rdesc=rdesc_out,
+                filename=str(gct_prefix),
+            )
+    except Exception as exc:
+        logger.warning("Failed to write site-vs-protein GCT: %s", exc)
+
+    # Optional: gene-level heatmaps for the metric matrix (explicit list + top-N ranked genes)
+    def _parse_genes(value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            parts = re.split(r"[,\s]+", value.strip())
+            return [p for p in (x.strip() for x in parts) if p]
+        if isinstance(value, (list, tuple)):
+            out = []
+            for item in value:
+                if item is None:
+                    continue
+                s = str(item).strip()
+                if s:
+                    out.append(s)
+            return out
+        return []
+
+    genes_requested = _parse_genes(tp.get("genes") or tp.get("gene_list"))
+    genes_file = _as_path(tp.get("genes_file") or tp.get("gene_file"))
+    if genes_file is not None:
+        genes_file = _resolve_path(genes_file, data_dir_path)
+        if genes_file.exists():
+            extra = [line.strip() for line in genes_file.read_text().splitlines() if line.strip()]
+            genes_requested.extend(extra)
+        else:
+            logger.warning("totalprotein genes_file does not exist: %s", genes_file)
+    genes_requested = list(dict.fromkeys(genes_requested))
+
+    try:
+        topn_genes = int(tp.get("topn_genes", 0) or 0)
+    except Exception:
+        topn_genes = 0
+
+    gene_col = tp.get("gene_col") or tp.get("rank_gene_col") or None
+    if isinstance(gene_col, str):
+        gene_col = gene_col.strip() or None
+
+    try:
+        heatmap_zscore = bool(tp.get("heatmap_zscore", True))
+    except Exception:
+        heatmap_zscore = True
+
+    # Rank genes by between-group variation (if a group variable exists), else by across-sample variation.
+    ranked_genes: list[str] = []
+    if topn_genes > 0:
+        # Choose a gene column in rdesc to group by
+        rdesc_cols_lut = {c.lower(): c for c in rdesc_out.columns}
+        rank_gene_col = None
+        if gene_col and gene_col.lower() in rdesc_cols_lut:
+            rank_gene_col = rdesc_cols_lut[gene_col.lower()]
+        else:
+            for cand in ("symbol", "gene", "geneid", "ensg", "ensp", "uniprot_id"):
+                if cand in rdesc_cols_lut:
+                    rank_gene_col = rdesc_cols_lut[cand]
+                    break
+        if rank_gene_col is None:
+            logger.warning("Unable to rank genes (no gene-like column found in rdesc); skipping topn_genes")
+        else:
+            gene_series = rdesc_out.loc[metric_df.index, rank_gene_col]
+            gene_series = gene_series.fillna("").astype(str)
+            gene_series = gene_series.str.strip()
+            gene_series_lc = gene_series.str.lower()
+            good = gene_series.ne("") & ~gene_series_lc.isin({"<null>", "nan"})
+            gene_series = gene_series[good]
+            metric_df_good = metric_df.loc[gene_series.index]
+
+            gene_medians = metric_df_good.groupby(gene_series).median()
+
+            # Choose a grouping variable from cdesc (optional)
+            group_var = tp.get("group_var") or None
+            if isinstance(group_var, str):
+                group_var = group_var.strip() or None
+            if group_var is None:
+                for cand in ("geno", "group", "condition", "batch", "plex"):
+                    if cand in cdesc_out.columns:
+                        group_var = cand
+                        break
+
+            if group_var and group_var in cdesc_out.columns:
+                groups = cdesc_out.loc[samples, group_var].astype(str)
+                grp_matrix = gene_medians.T.join(groups.rename(group_var)).groupby(group_var).median().T
+                scores = grp_matrix.std(axis=1, skipna=True)
+            else:
+                scores = gene_medians.std(axis=1, skipna=True)
+
+            ranked_genes = (
+                scores.sort_values(ascending=False)
+                .head(topn_genes)
+                .index.astype(str)
+                .tolist()
+            )
+
+    genes_to_plot = list(dict.fromkeys([*genes_requested, *ranked_genes]))
+    if genes_to_plot:
+        meta_cols = _parse_genes(tp.get("heatmap_meta_cols") or tp.get("meta_cols")) or None
+        try:
+            generated, missing, dbg = generate_gene_heatmaps(
+                metric_df,
+                rdesc_out,
+                samples,
+                outdir,
+                genes_to_plot,
+                metric,
+                force_data=replace,
+                force_plots=replace,
+                gene_col=gene_col,
+                debug=bool(tp.get("gene_debug", False)),
+                generate_zscore=heatmap_zscore,
+                cdesc=cdesc_out,
+                meta_cols=meta_cols,
+            )
+            genes_path = outdir / "genes_requested.txt"
+            if replace or not genes_path.exists():
+                genes_path.write_text("\n".join(genes_to_plot) + "\n")
+            logger.info(
+                "Totalprotein gene heatmaps complete: generated=%s requested=%s missing=%s",
+                generated,
+                len(genes_to_plot),
+                len(missing),
+            )
+        except Exception as exc:
+            logger.warning("Failed to generate totalprotein gene heatmaps: %s", exc)
 
 
 def _summarize_dry_run(meta_df: pd.DataFrame, found: dict, mappings: dict) -> str:
@@ -806,6 +1162,12 @@ def report(
         template, config, data_dir, output_dir, metadata, gct, root_dir, save_env
     )
     tasks.run_r_code_with_params(params_dict, interactive=interactive)
+    _maybe_run_totalprotein_compare(
+        config=config,
+        data_dir=data_dir,
+        output_dir=params_dict["output_dir"],
+        gct=gct,
+    )
     return
 
     print(template)
@@ -1336,9 +1698,10 @@ def compare_protein(site_gct, protein_gct, join_on, output_dir, agg, metric, wri
     if gene_list:
         emat_for_plot = ratio_df if metric == "ratio" else log2ratio_df
         try:
+            cdesc_out = cdesc_s.loc[samples]
             generated, missing, dbg = generate_gene_heatmaps(
                 emat_for_plot,
-                rdesc_s,
+                rdesc_out,
                 samples,
                 outdir,
                 gene_list,
@@ -1348,6 +1711,7 @@ def compare_protein(site_gct, protein_gct, join_on, output_dir, agg, metric, wri
                 gene_col=gene_col,
                 debug=gene_debug,
                 generate_zscore=zscore,
+                cdesc=cdesc_out,
             )
             click.echo(f"Generated heatmaps for {generated}/{len(gene_list)} genes.")
             if missing:

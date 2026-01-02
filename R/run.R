@@ -66,6 +66,156 @@ sanitize_path_component <- function(name) {
   name
 }
 
+ensure_dir <- function(path) {
+  dir.create(path, recursive = TRUE, showWarnings = FALSE)
+  path
+}
+
+link_or_copy_dir <- function(src, dest, replace = FALSE) {
+  if (is.null(src) || !dir.exists(src)) {
+    return(FALSE)
+  }
+  if (file.exists(dest) || dir.exists(dest)) {
+    if (!isTRUE(replace)) {
+      return(TRUE)
+    }
+    unlink(dest, recursive = TRUE, force = TRUE)
+  }
+  ensure_dir(dirname(dest))
+
+  ok <- FALSE
+  try({
+    ok <- file.symlink(src, dest)
+  }, silent = TRUE)
+  if (isTRUE(ok) && (file.exists(dest) || dir.exists(dest))) {
+    return(TRUE)
+  }
+
+  # Fallback to copy. `file.copy()` copies the directory into the parent.
+  dest_parent <- dirname(dest)
+  copied <- file.copy(src, dest_parent, recursive = TRUE)
+  src_base <- basename(src)
+  dest_base <- basename(dest)
+  if (src_base != dest_base) {
+    copied_path <- file.path(dest_parent, src_base)
+    if (dir.exists(copied_path) && !dir.exists(dest)) {
+      file.rename(copied_path, dest)
+    }
+  }
+  dir.exists(dest)
+}
+
+link_or_copy_file <- function(src, dest, replace = FALSE) {
+  if (is.null(src) || !file.exists(src)) {
+    return(FALSE)
+  }
+  if (file.exists(dest)) {
+    if (!isTRUE(replace)) {
+      return(TRUE)
+    }
+    unlink(dest, force = TRUE)
+  }
+  ensure_dir(dirname(dest))
+  ok <- FALSE
+  try({
+    ok <- file.symlink(src, dest)
+  }, silent = TRUE)
+  if (isTRUE(ok) && file.exists(dest)) {
+    return(TRUE)
+  }
+  file.copy(src, dest, overwrite = TRUE)
+  file.exists(dest)
+}
+
+integrate_totalprotein_volcano <- function(config, outdir) {
+  if (is.null(config$totalprotein) || !(config$totalprotein$do %||% FALSE)) {
+    return(invisible(FALSE))
+  }
+  tp_volcano_dir <- config$totalprotein$volcanodir %||% NULL
+  if (is.null(tp_volcano_dir) || !dir.exists(tp_volcano_dir)) {
+    log_warn("Total protein volcano directory missing; skipping", context = list(volcanodir = tp_volcano_dir %||% "<NA>"))
+    return(invisible(FALSE))
+  }
+
+  tp_dir <- ensure_dir(file.path(outdir, "totalprotein"))
+  writeLines(tp_volcano_dir, file.path(tp_dir, "volcano_source.txt"))
+
+  dest_volcano <- file.path(tp_dir, "volcano")
+  replace_flag <- config$advanced$replace %||% FALSE
+  ok <- link_or_copy_dir(tp_volcano_dir, dest_volcano, replace = replace_flag)
+  if (isTRUE(ok)) {
+    log_info("Integrated total protein volcano outputs", context = list(src = tp_volcano_dir, dest = dest_volcano))
+  } else {
+    log_warn("Failed to integrate total protein volcano outputs", context = list(src = tp_volcano_dir, dest = dest_volcano))
+  }
+  invisible(ok)
+}
+
+match_totalprotein_volcano <- function(config, outdir, contrasts) {
+  if (is.null(config$totalprotein) || !(config$totalprotein$do %||% FALSE)) {
+    return(invisible(FALSE))
+  }
+  tp_volcano_dir <- config$totalprotein$volcanodir %||% NULL
+  if (is.null(tp_volcano_dir) || !dir.exists(tp_volcano_dir)) {
+    return(invisible(FALSE))
+  }
+  if (is.null(contrasts) || length(contrasts) == 0) {
+    return(invisible(FALSE))
+  }
+
+  all_pdf <- list.files(tp_volcano_dir, pattern = "\\\\.pdf$", recursive = TRUE, full.names = TRUE)
+  all_tsv <- list.files(tp_volcano_dir, pattern = "\\\\.tsv$", recursive = TRUE, full.names = TRUE)
+  if (length(all_pdf) == 0 && length(all_tsv) == 0) {
+    log_warn("No total protein volcano files found", context = list(dir = tp_volcano_dir))
+    return(invisible(FALSE))
+  }
+
+  choose_best <- function(expr, files) {
+    if (length(files) == 0) return(NA_character_)
+    expr <- as.character(expr)
+    tokens <- regmatches(expr, gregexpr("[A-Za-z][A-Za-z0-9_]+", expr))[[1]]
+    tokens <- unique(tolower(tokens))
+    tokens <- tokens[!tokens %in% c("none", "null", "na")]
+    if (length(tokens) == 0) return(NA_character_)
+
+    fn_lc <- tolower(basename(files))
+    scores <- vapply(fn_lc, function(f) sum(vapply(tokens, function(t) grepl(t, f, fixed = TRUE), logical(1))), numeric(1))
+    best_idx <- which.max(scores)
+    min_hits <- min(2L, length(tokens))
+    if (scores[best_idx] < min_hits) return(NA_character_)
+    files[[best_idx]]
+  }
+
+  replace_flag <- config$advanced$replace %||% FALSE
+  out_tp_limma <- ensure_dir(file.path(outdir, "totalprotein", "limma"))
+
+  rows <- lapply(names(contrasts), function(label) {
+    expr <- contrasts[[label]]
+    pdf <- choose_best(expr, all_pdf)
+    tsv <- choose_best(expr, all_tsv)
+    safe <- sanitize_path_component(label)
+    if (!is.na(pdf)) {
+      link_or_copy_file(pdf, file.path(out_tp_limma, paste0("volcano_", safe, ".pdf")), replace = replace_flag)
+    }
+    if (!is.na(tsv)) {
+      link_or_copy_file(tsv, file.path(out_tp_limma, paste0("volcano_", safe, ".tsv")), replace = replace_flag)
+    }
+    data.frame(
+      contrast = label,
+      contrast_expression = as.character(expr),
+      totalprotein_pdf = as.character(pdf),
+      totalprotein_tsv = as.character(tsv),
+      stringsAsFactors = FALSE
+    )
+  })
+
+  matches <- do.call(rbind, rows)
+  outf <- file.path(outdir, "totalprotein", "totalprotein_limma_matches.tsv")
+  readr::write_tsv(matches, outf)
+  log_info("Wrote total protein match table", context = list(file = outf))
+  invisible(TRUE)
+}
+
 cache_tools <- get_tool_env("cache")
 `%cached_by%` <- cache_tools$`%cached_by%`
 
@@ -441,13 +591,12 @@ run <- function(
   # util_tools <- get_tool_env("utils")
   # limma_tools <- get_tool_env("limma")
 
-  OUTDIR <- output_dir %||% data_dir %||% "."
-
-  #
   config_file <- config_file %||% file.path(here(), "config", "base.toml")
   config <- load_and_validate_config(config_file, data_dir)
   # config <- io_tools$load_config(config_file, root_dir = data_dir)
   log_debug("Configuration sections loaded", context = list(keys = paste(names(config), collapse = ",")))
+
+  OUTDIR <- output_dir %||% config$output_dir %||% data_dir %||% "."
 
   z_score_flag <- config$heatmap$z_score %||% TRUE
   z_score_by <- config$heatmap$z_score_by %||% config$heatmap$zscore_by %||% NULL
@@ -504,6 +653,9 @@ run <- function(
   if (!dir.exists(OUTDIR)) dir.create(OUTDIR, recursive = TRUE)
   OUTNAME <- "" # don't set an actual name for the internal files saved within the main dir
 
+  # Bring in external total-protein outputs (if configured) next to this run.
+  integrate_totalprotein_volcano(config, OUTDIR)
+
   FRIENDLY_NAME <- suboutdir %>%
     str_replace_all("_", " ") %>%
     str_replace(., "\\d+$", "") %>%
@@ -546,6 +698,13 @@ run <- function(
       writeLines(limma_summary, sumf)
       log_info("Wrote LIMMA summary", context = list(file = sumf))
     }
+
+    # If total-protein volcano outputs were provided, try to match them to these contrasts.
+    contrast_exprs <- attr(topTables, "contrast_expression")
+    if (is.null(contrast_exprs)) {
+      contrast_exprs <- setNames(names(topTables), names(topTables))
+    }
+    match_totalprotein_volcano(config, OUTDIR, contrast_exprs)
 
     topTables %>% purrr::imap(~ { # first loop save tables
       .table <- .x %>% arrange(desc(t))
@@ -945,15 +1104,8 @@ run <- function(
       }) # end of map
     # browser()
 
-    if (config$totalprotein$do) {
-      # this is not functional yet
-      # sitediff_dir <- file.path(OUTDIR, "limma", "tables")
-      # total_protein_dir <- file.path(OUTDIR, "limma", "tables", "totalprotein")
-      # if (!dir.exists(total_protein)) dir.create(total_protein, recursive = TRUE)
-      # comparisons <- io_tools$match_comparisons(sitediff_dir, total_protein_dir)
-    }
-  }
+	  }
 
-  log_info("site-annotate run complete", context = list(outdir = OUTDIR))
+	  log_info("site-annotate run complete", context = list(outdir = OUTDIR))
 }
 # end of run

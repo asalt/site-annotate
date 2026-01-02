@@ -153,6 +153,9 @@ load_config <- function(file_path, root_dir = NULL) {
   config$params$norm$normalize <- config$params$norm$normalize %||% FALSE
   config$params$norm$log_transform <- config$params$norm$log_transform %||% FALSE
 
+  if (is.null(config$params$totalprotein)) {
+    config$params$totalprotein <- list()
+  }
   config$params$totalprotein$do <- config$params$totalprotein$do %||% FALSE
 
   if (is.null(config$params$advanced)) {
@@ -164,10 +167,31 @@ load_config <- function(file_path, root_dir = NULL) {
   if (is.null(config$params$qc)) config$params$qc <- list()
   if (is.null(config$params$qc$do)) config$params$qc$do <- TRUE
   if (is.null(config$params$qc$downsample_n)) config$params$qc$downsample_n <- 200000
+  if (is.null(config$params$qc$level)) config$params$qc$level <- 1L
 
 
   if (is.null(root_dir)) {
     root_dir <- getwd()
+  }
+
+  config$params$output_dir <- is_null_config(config$params$output_dir)
+  if (!is.null(config$params$output_dir)) {
+    config$params$output_dir <- ensure_absolute_path(config$params$output_dir, root_dir)
+  }
+
+  config$params$totalprotein$volcanodir <- is_null_config(config$params$totalprotein$volcanodir)
+  if (!is.null(config$params$totalprotein$volcanodir)) {
+    config$params$totalprotein$volcanodir <- ensure_absolute_path(config$params$totalprotein$volcanodir, root_dir)
+  }
+
+  tp_gct_prof <- config$params$totalprotein$gct_prof %||%
+    config$params$totalprotein$prof_gct %||%
+    config$params$gct_prof %||%
+    config$params$prof_gct %||%
+    NULL
+  config$params$totalprotein$gct_prof <- is_null_config(tp_gct_prof)
+  if (!is.null(config$params$totalprotein$gct_prof)) {
+    config$params$totalprotein$gct_prof <- ensure_absolute_path(config$params$totalprotein$gct_prof, root_dir)
   }
 
 
